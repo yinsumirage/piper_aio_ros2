@@ -1,0 +1,151 @@
+# 实机闭环 TODO
+
+截至 2026-08-13，本文件按真实依赖顺序记录从当前 v0.1 软件框架走到“三相机、双主臂、
+双从臂、可采集真实 LeRobot 数据”的剩余工作。任务完成只以对应验收证据为准；代码存在、
+单元测试通过、合成数据通过和真机通过是四个不同层级。
+
+## 当前结论
+
+| 能力 | 当前状态 | 已有证据与边界 |
+|---|---|---|
+| 四路 CAN 稳定绑定 | 真机已验证 | 四路均为 1 Mbps、UP，且被动监听到真实流 |
+| 四臂 ROS 2 编排 | 部分验证 | launch/config 已构建；只受控读取过主左一路，未整体启动四臂图 |
+| 真机主从遥操作 | **尚未实现** | 仓库没有 teleop 节点或 command publisher；`four_arm.launch.py` 只是启动主臂读取节点和从臂驱动节点 |
+| RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
+| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 19 个 Python 测试通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
+| 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
+| 硬件 replay | **未实现，刻意禁用** | 当前 replay 只读 shape；`--execute` 明确拒绝，不创建 publisher |
+
+所以当前不能表述为“整条真实 pipeline 已经没问题”。准确说法是：离线 schema、同步、压缩
+bag 读取、HDF5 校验和 LeRobot v3 导出在合成输入上已经打通；真实输入、遥操作安全和长时间
+稳定性仍需下面的 P0 验收。
+
+## 依赖顺序
+
+```text
+四路 CAN + 官方驱动
+          ├── 主臂 JointState ──> teleop bridge ──> 从臂 command
+          └── 从臂 state / EEF ──────────────────────┐
+                                                     ├── 11-topic rosbag
+三台 RealSense ──> 固定 serial/role ──> 三路 RGB ───┘
+                                                            │
+                                                            v
+                                      canonical HDF5 -> validate -> LeRobot v3
+```
+
+teleop bridge 和三相机 topic 是真实录包的两个前置条件，可以分别开发，但缺任意一个都不能做
+完整 episode 验收。
+
+## P0：先修正真实图上的录包门禁
+
+- [ ] 修正 `bag_preflight` 的 control-topic 检查。官方从臂节点会发布
+  `/follower_left/joint_ctrl` 和 `/follower_right/joint_ctrl` 作为控制反馈；当前按名称匹配
+  `joint_ctrl` 的启发式检查会把它们误报成额外 command publisher，真实四臂图上可能阻止录包。
+- [ ] 增加回归测试：允许已知官方反馈 topic；仍拒绝未知的 enable、position command 或额外
+  joint command publisher。
+- [ ] 在隔离 ROS domain 中同时模拟官方反馈 topic 和 11 个白名单 topic，确认 preflight、
+  file/zstd 录包、inspect、HDF5 和 validate 全部通过。
+
+验收：真实驱动节点存在时，preflight 只因真正缺流、类型错误、磁盘不足或未授权的 command
+publisher 失败，不因官方反馈 topic 误报。
+
+## P0：实现默认不动作的双臂 teleop bridge
+
+- [ ] 新增最小 `teleop` 节点、配置和独立 launch；不要把控制默认塞进 `four_arm.launch.py`。
+- [ ] 输入固定为 `/master_left/joint_states`、`/master_right/joint_states` 和两路 follower feedback；
+  输出固定为 `/follower_left/joint_ctrl_cmd`、`/follower_right/joint_ctrl_cmd`。
+- [ ] 按 `JointState.name` 把官方主臂 9 维消息转换成 follower 需要的 7 维
+  `joint1..joint6,gripper`；gripper 必须使用 `joint7 - joint8`，不能直接取主臂第 7 个
+  `gripper` 占位值。
+- [ ] 明确生成 follower 驱动使用的 `velocity[6]` 速度百分比和 `effort[6]` 夹爪力参数。
+  不能原样转发 9 维 master 消息：官方驱动会把第 7 个 position 当夹爪，并可能退回 100%
+  速度。
+- [ ] 默认 `armed=false`，未显式 arming 时不发布任何 command；bridge 永不自动调用
+  `/follower_*/enable_srv`，从臂硬件使能保持独立、显式操作。
+- [ ] command 发布前同时满足：左右 master 新鲜、左右 follower feedback 新鲜、消息 finite、
+  关节名称完整、主从初始差小于配置阈值。
+- [ ] 加入保守且可配置的关节限位、单步最大变化、夹爪范围、发布频率和输入超时。超时或异常后
+  停止发布并锁存 fault，必须人工重新 arming。
+- [ ] 让录包中的 `executed_action_*` 精确记录 bridge 实际发布的 7 维 command。这里的
+  `executed` 仍表示“已发给驱动的 commanded action”，不是电机 ACK；物理跟踪看 follower state。
+- [ ] 纯函数测试覆盖：乱序 9D 映射、夹爪、左右隔离、限位、单步限制、stale、初始不对齐、
+  unarmed 零发布；再用隔离 ROS domain 做无硬件 topic/rate 测试。
+
+验收：不连接或不使能从臂也能证明节点默认零 command；合成 master 输入在显式 arming 后只产生
+受限的 7D command；stale、越界和解除 arming 均立即停止新 command。
+
+## P0：固定三台 RealSense 的物理角色
+
+- [ ] 接入三台相机后保存 `rs-enumerate-devices -s` 的 serial、型号和 USB 连接证据，人工确认
+  front、left wrist、right wrist 三个物理角色。
+- [ ] 新增 `config/cameras.yaml` 作为 serial → role 的唯一事实源，并新增只读
+  `scripts/realsense_status.sh` 检查缺失、重复或角色串换。
+- [ ] 新增三相机 launch，按 serial 启动官方 ROS 2 wrapper，稳定输出：
+  `/camera_f/color/image_raw`、`/camera_l/color/image_raw`、`/camera_r/color/image_raw`。
+- [ ] 第一版固定 RGB8、640×480、30 Hz，depth 默认关闭；不要先引入点云、对齐深度或额外图像
+  transport。
+- [ ] 检查每路 encoding、shape、header stamp、QoS、实际帧率和 USB 带宽；运行至少 5 分钟，
+  记录掉帧、设备重连和 timestamp 跳变。
+
+验收：重启或重新插拔后角色不交换；三路各自稳定约 30 Hz；record config 无需改 topic 即可通过
+相机部分的 preflight。
+
+## P0：分阶段真机遥操作验收
+
+- [ ] 明确测试现场：从臂周围清空、急停可触达、先单侧后双侧、操作者明确口令；每一步都带
+  timeout 和结束后的残留进程/CAN 状态检查。
+- [ ] 从臂未使能、bridge 未 arming：启动四臂驱动，只读核对四路 topic、类型、名称、频率、
+  gripper 单位和左右角色；不得运动。
+- [ ] 从臂未使能、bridge 显式 arming：观察生成的 command 与 master/follower 差值，仍不得运动；
+  验证 command 速度字段为保守值而不是 100%。
+- [ ] 只测试左侧：初始对齐后显式使能，做单关节小幅运动、停止、stale/fault 和夹爪测试；通过后
+  立即 disable。
+- [ ] 只测试右侧重复同一流程；左右单侧都通过后才允许双侧。
+- [ ] 双侧低速短时运行，核对左右不串线、command 与 follower state 的延迟/误差、停止行为和
+  `/actions/executed` 语义。
+
+验收：默认启动不运动；任何缺流、stale、越界或解除 arming 都不再产生 command；单侧和双侧
+方向、单位、夹爪、速度均经人工观察与记录确认。
+
+## P0：首个真实 episode 闭环
+
+- [ ] 先录 10 秒静态 bag，再录一个 10–30 秒低速遥操作 bag；每次只使用显式 11-topic 白名单。
+- [ ] `bag_inspect` 核对每路类型、count、rate、起止时间和 timestamp 来源。
+- [ ] 转换到 HDF5，保存 QC JSON，核对 overlap、丢帧原因、同步 delta、有效帧数和
+  `action_source=executed`。
+- [ ] `validate_episode` 通过后导出 LeRobot v3；重新加载 Dataset，并逐路观看 MP4，确认左右、
+  相机角色、颜色和时间方向正确。
+- [ ] 人工抽查同一时刻的 master intent、实际 command、follower qpos 和 EEF，不能只检查 shape。
+- [ ] 把 bag、HDF5、QC、LeRobot 输出保留在数据目录，不提交 Git；记录仓库 SHA、配置 SHA、CAN
+  映射和相机 serial，保证 episode 可追溯。
+
+验收：至少一个真实 episode 完成 record → inspect → HDF5 → validate → LeRobot reload，并有三路
+视频和 command/state 对齐的人审记录。达到此项后才可把“真实数据 pipeline 已打通”写入进展文档。
+
+## P1：稳定性和数据质量
+
+- [ ] 逐步扩展到 5–10 分钟录制，测磁盘增长、CPU、内存、zstd 吞吐、丢帧和相机重连。
+- [ ] 用真实统计重新设定 RGB/state/action 同步容差，不凭合成数据固定最终值。
+- [ ] 增加 command 与 follower state 的跟踪误差、延迟和异常段 QC；必要时另录官方
+  `/follower_*/joint_ctrl` 控制反馈，但不要混淆它和 bridge command。
+- [ ] 决定 episode 失败后的清理/隔离策略，并验证磁盘不足、中断录包和部分 topic 消失时不会生成
+  被误当成合格数据的输出。
+- [ ] 完成多 episode 批量导出、任务标签约定、数据集版本和本地/Hub 发布边界。
+
+## P2：replay 与策略推理
+
+- [ ] 在真实数据合同稳定前继续保持硬件 replay 禁用。
+- [ ] 先实现纯离线时间轴检查和可视化，再实现隔离 ROS domain 的 command replay。
+- [ ] 若以后增加真机 `--execute`，必须复用 teleop 的 arming、初始对齐、限位、单步限制、stale、
+  显式 enable/disable 和单侧验收门禁；禁止从当前 dry-run 直接跳到双臂执行。
+
+## v1 完成定义
+
+- 三台相机按 serial 稳定绑定并通过 5 分钟采集检查。
+- 四路机械臂角色、topic、单位和 gripper 映射全部真机确认。
+- teleop 默认不动作、独立显式使能、故障锁存，并完成左、右、双侧分阶段验收。
+- 至少一个真实 11-topic episode 完成全链路转换、QC、LeRobot v3 回读和视频人工抽查。
+- 文档明确保留“commanded action 不等于电机 ACK”和“硬件 replay 尚未验证”的证据边界。
+
+下一项代码工作应从“修正 preflight 误报并实现默认 unarmed 的 teleop bridge 离线版本”开始；
+相机 serial 绑定必须等待三台设备实际接入后再填写，不能预造编号。

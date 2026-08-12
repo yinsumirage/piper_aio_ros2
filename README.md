@@ -10,7 +10,8 @@
 受控检查；相机、EEF、其余三路 ROS 解码和完整 episode 尚未验证。可审计边界见
 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
-rosbag、canonical HDF5 与 LeRobot Dataset v3 的闭环用法见 [`docs/data_pipeline.md`](docs/data_pipeline.md)。
+rosbag、canonical HDF5 与 LeRobot Dataset v3 的闭环用法见 [`docs/data_pipeline.md`](docs/data_pipeline.md)；
+实机遥操作、相机绑定和首个真实 episode 的依赖顺序见 [`docs/TODO.md`](docs/TODO.md)。
 
 ## v0 能做什么
 
@@ -63,6 +64,7 @@ source install/setup.bash
 | `scripts/` | 日常只读状态检查 |
 | `test/` | CAN 配置解析和 episode schema 测试 |
 | `docs/PROGRESS.md` | 已验证事实、限制和下一步 |
+| `docs/TODO.md` | 实机遥操作、相机和真实数据闭环验收清单 |
 
 采集节点必须在交互式终端运行。先检查并修改 `config/topics.yaml`，再运行：
 
