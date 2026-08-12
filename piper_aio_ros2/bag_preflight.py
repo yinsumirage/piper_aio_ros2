@@ -9,6 +9,23 @@ import sys
 from .bag_config import load_stream_config
 
 
+OFFICIAL_FOLLOWER_FEEDBACK_TOPICS = frozenset(
+    {"/follower_left/joint_ctrl", "/follower_right/joint_ctrl"}
+)
+CONTROL_TOPIC_LEAVES = frozenset(
+    {"enable", "enable_flag", "gripper_ctrl", "joint_ctrl", "joint_ctrl_cmd", "joint_ctrl_single", "pos_cmd"}
+)
+
+
+def is_unexpected_control_topic(topic, whitelist=()):
+    """Return whether a graph topic is an unapproved command or enable path."""
+    normalized = "/" + "/".join(part for part in str(topic).lower().split("/") if part)
+    if normalized in whitelist or normalized in OFFICIAL_FOLLOWER_FEEDBACK_TOPICS:
+        return False
+    parts = normalized.strip("/").split("/")
+    return bool(parts and (parts[-1] in CONTROL_TOPIC_LEAVES or "control" in parts))
+
+
 def _existing_parent(path):
     path = Path(path).expanduser().resolve()
     while not path.exists() and path != path.parent:
@@ -78,8 +95,7 @@ def main(argv=None):
                 report["errors"].append(f"{name}: no publisher")
 
         for topic in graph_types:
-            lowered = topic.lower()
-            if topic in whitelist or not any(word in lowered for word in ("joint_ctrl", "gripper_ctrl", "/control")):
+            if not is_unexpected_control_topic(topic, whitelist):
                 continue
             for info in node.get_publishers_info_by_topic(topic):
                 report["unexpected_control_publishers"].append(
