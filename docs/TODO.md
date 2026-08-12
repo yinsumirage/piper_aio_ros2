@@ -9,8 +9,8 @@
 | 能力 | 当前状态 | 已有证据与边界 |
 |---|---|---|
 | 四路 CAN 稳定绑定 | 真机已验证 | 四路均为 1 Mbps、UP，且被动监听到真实流 |
-| 四臂 ROS 2 编排 | 部分验证 | launch/config 已构建；只受控读取过主左一路，未整体启动四臂图 |
-| 真机主从遥操作 | 离线实现，真机未验证 | 默认 unarmed bridge、纯单测和隔离 ROS 已通过；未连接、使能或移动四臂 |
+| 四臂 ROS 2 编排 | 四路只读已验证 | 未使能窗口整体启动过四臂图；四路反馈约 200 Hz，namespace→CAN 参数与 schema 符合配置；物理左右仍待逐臂扰动确认 |
+| 真机主从遥操作 | unarmed 真机已验证 | 真实四路反馈下启动 bridge，4.02 秒两路 command 均为 0；未调用 arm/enable，未运动 |
 | RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
 | bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 34 个 Python 测试通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
 | 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
@@ -77,9 +77,10 @@ publisher 失败，不因官方反馈 topic 误报。
 验收：不连接或不使能从臂也能证明节点默认零 command；合成 master 输入在显式 arming 后只产生
 受限的 7D command；stale、越界和解除 arming 均立即停止新 command。
 
-四条物理臂的夹爪存在由用户确认，四处 `gripper_exist` 保持 `true`。9D → 7D 路径按官方源码
-实现并作为 teleop 主路径；本机真实 master topic 的 name、维度和夹爪值仍待未使能只读确认，
-不能把源码接口写成已观测真机事实。
+四条物理臂的夹爪存在由用户确认，四处 `gripper_exist` 保持 `true`。2026-08-13 未使能只读窗口
+已确认两路真实 master 都按严格顺序发布 9D `joint1..joint6,gripper,joint7,joint8`，占位
+`gripper=0`，且 `joint7+joint8=0`；当时 `joint7-joint8` 为左 `-0.0003 m`、右 `0.0 m`。
+这确认了当前消息 schema 和映射输入，不等于夹爪完整行程、方向或单位已经做过物理标定。
 
 ## P0：固定三台 RealSense 的物理角色
 
@@ -101,8 +102,10 @@ publisher 失败，不因官方反馈 topic 误报。
 
 - [ ] 明确测试现场：从臂周围清空、急停可触达、先单侧后双侧、操作者明确口令；每一步都带
   timeout 和结束后的残留进程/CAN 状态检查。
-- [ ] 从臂未使能、bridge 未 arming：启动四臂驱动，只读核对四路 topic、类型、名称、频率、
-  gripper 单位和左右角色；不得运动。
+- [x] 从臂软件 gate 未使能、bridge 未 arming：在隔离 ROS domain 整体启动四臂驱动，确认四路
+  topic/schema/频率、namespace→CAN、两路 9D master 夹爪映射和 unarmed 零 command；未运动。
+- [ ] 由现场人员依次轻微扰动四条臂和两只 master 夹爪，确认物理 left/right 不串线，并验证
+  关节/夹爪方向、单位和可用行程；静态四路不同姿态不能单独证明物理角色没有接反。
 - [ ] 从臂未使能、bridge 显式 arming：观察生成的 command 与 master/follower 差值，仍不得运动；
   验证 command 速度字段为保守值而不是 100%。
 - [ ] 只测试左侧：初始对齐后显式使能，做单关节小幅运动、停止、stale/fault 和夹爪测试；通过后
@@ -113,6 +116,22 @@ publisher 失败，不因官方反馈 topic 误报。
 
 验收：默认启动不运动；任何缺流、stale、越界或解除 arming 都不再产生 command；单侧和双侧
 方向、单位、夹爪、速度均经人工观察与记录确认。
+
+### 下一次（计划 2026-08-14）只做未使能 arming gate
+
+本次静态样本按 7D canonical 顺序比较，左侧最大主从误差约 `0.145 rad`（joint4），右侧最大
+误差约 `0.112 rad`（joint6；joint4 约 `0.101 rad`），都超过当前
+`initial_joint_error_rad=0.10`，所以此姿态下显式 arm 应被拒绝。先物理对齐，不要先放宽阈值。
+
+- [ ] 现场清空、急停可触达；确认没有旧 ROS/control 进程，四路 CAN 状态正常且 host TX 稳定。
+- [ ] 从臂硬件不 enable，启动 `four_arm.launch.py`，复核 `auto_enable=false` 和四路新鲜反馈。
+- [ ] 人工把左右 master/follower 的 6 关节及夹爪对齐到门限内；只读计算并记录每轴差值。
+- [ ] 单独启动 `teleop.launch.py`；先确认两路 command 仍为 0、无 fault、arm service 存在。
+- [ ] 仅调用一次 `/dual_arm_teleop/arm` 的 `SetBool true`；硬件仍不 enable。若拒绝，记录理由并
+  disarm，不绕过门禁；若成功，仅观察左右 7D command、`velocity[6]=10`、`effort[6]=0.5` 和
+  左右映射，随后立即 `SetBool false`。
+- [ ] 结束后确认 command 停止、四个 driver/teleop 进程无残留、停止状态 host TX 不再增长。
+- [ ] 本次不测试硬件 enable 或运动；左、右、双侧低速动作继续保留为后续单独授权项。
 
 ## P0：首个真实 episode 闭环
 
@@ -154,5 +173,5 @@ publisher 失败，不因官方反馈 topic 误报。
 - 至少一个真实 11-topic episode 完成全链路转换、QC、LeRobot v3 回读和视频人工抽查。
 - 文档明确保留“commanded action 不等于电机 ACK”和“硬件 replay 尚未验证”的证据边界。
 
-下一项代码工作应从“修正 preflight 误报并实现默认 unarmed 的 teleop bridge 离线版本”开始；
-相机 serial 绑定必须等待三台设备实际接入后再填写，不能预造编号。
+下一项 teleop 工作是上面的“未使能 arming gate”：先物理对齐并验证门禁，再观察真实 7D
+command，仍不 enable 或运动。相机 serial 绑定必须等待三台设备实际接入后再填写，不能预造编号。

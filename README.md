@@ -6,9 +6,9 @@
 官方 `piper_ros2` 提供驱动，`piper-aio` 提供旧采集参考，`piper_sdk` 提供底层 SDK；
 三个官方仓库必须保持干净，本仓库不回写它们。
 
-截至 2026-08-13，四路稳定 CAN 接口及被动真实流已验证，主左只读 ROS 路径已做一次
-受控检查；双臂 teleop 已完成纯逻辑和隔离 ROS 合成验证，但没有连接、使能或移动真机；
-相机、EEF、其余三路 ROS 解码和完整 episode 尚未验证。可审计边界见
+截至 2026-08-13，四路稳定 CAN 接口、被动真实流和四臂 ROS 反馈已在有界未使能窗口验证；
+双臂 teleop 已完成纯逻辑、隔离 ROS 和真实四路输入下的 unarmed 零发布验证，但没有调用 arm、
+enable 或移动真机；相机、EEF 语义和完整 episode 尚未验证。可审计边界见
 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
 rosbag、canonical HDF5 与 LeRobot Dataset v3 的闭环用法见 [`docs/data_pipeline.md`](docs/data_pipeline.md)；
@@ -165,7 +165,7 @@ topic，不做多余 remap。namespace 保证四臂 topic/service 不冲突。te
 `config/topics.yaml` 仅把采集器的 arm
 输入改到上述 namespaced feedback，相机 topic 未改。
 
-## 安全双臂 teleop（仅代码和隔离 ROS 已验证）
+## 安全双臂 teleop（代码、隔离 ROS 与真机 unarmed 已验证）
 
 `teleop.launch.py` 单独启动 `/dual_arm_teleop`。节点默认且固定从 unarmed 开始，不调用
 `/follower_*/enable_srv`，也不修改 `auto_enable: false`。两侧共同 arming：缺任一 master 或
@@ -174,16 +174,18 @@ follower、输入不新鲜、名称/维度/finite 检查失败、初始关节或
 官方 reader 源码在 `gripper_exist: true` 时构造 9D
 `joint1..joint6,gripper,joint7,joint8`；其中 `gripper` 为占位，bridge 用
 `joint7-joint8` 生成 7D `joint1..joint6,gripper`。四条物理臂均有夹爪，配置保持四处
-`gripper_exist: true`。但本机真实 master topic 的 name、维度和夹爪数值尚未做未使能只读确认，
-所以 9D 是“按官方源码和用户物理确认实现”，不是“本机消息已真机验证”。映射器能严格解析
-6D reader 输出用于兼容诊断，但 teleop arming 必须有 9D 夹爪输入，绝不会给第 7 维补零。
+`gripper_exist: true`。本机两路真实 master 已在未使能窗口确认严格 9D name、占位
+`gripper=0` 和相反的 `joint7/joint8`；当时 canonical 夹爪为左 `-0.0003 m`、右 `0.0 m`。
+这只确认当前消息输入，夹爪物理方向、零点、单位与完整行程仍待现场扰动标定。映射器能严格
+解析 6D reader 输出用于兼容诊断，但 teleop arming 必须有 9D 夹爪输入，绝不会给第 7 维补零。
 
 command 显式填写 `velocity[6]=speed_percent` 和 `effort[6]=gripper_effort`，不触发官方节点的
 100% 速度回退。任一侧 stale、非有限、绝对值越界、schema 改变或单步跳变会停止后续双侧发布并
 锁存 fault；必须显式 disarm（同时清空旧输入）后，重新收到四路新鲜数据才能再次 arm。
 `config/teleop.yaml` 的默认阈值只是保守的软件门禁，不是 Piper 物理极限，必须在真机阶段标定。
 
-以下是真机获批后的操作顺序，本任务没有执行这些命令：
+以下是真机分阶段操作顺序。本轮只执行了前两项并确认 unarmed 零 command；第 3 项 arm 及后续
+enable/运动均未执行：
 
 ```bash
 # 1. 先按获批流程启动驱动；auto_enable 仍为 false
@@ -283,10 +285,10 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
 - 未在真实相机、完整 leader/follower/EEF topic 组合上录制并保存 episode。
 - 未验证不同设备时钟下的时间戳同步、实际图像 encoding、EEF 坐标系和 RPY 约定。
 - 未实现压缩图像、动态分辨率、rosbag 输入、完整 replay 发布或硬件安全系统。
-- CAN 系统部署和四路被动流已验证；四臂 launch 只做静态/解析验证，未整体启动。
-  主左只读 ROS 路径单独检查过，初始化有非零查询 TX；未使能或运动机械臂。
-- teleop 的纯逻辑、隔离 ROS 合成发布和 fault 停发已验证；真实四臂 topic、方向、单位、夹爪、
-  enable 后运动和长时间稳定性均未验证。
+- CAN 系统部署、四路被动流和四臂 launch 的有界真实反馈已验证；四路约 200 Hz，启动各产生
+  13 个查询 TX，停止后 TX 不再增长；没有 enable 或运动机械臂。
+- teleop 的纯逻辑、隔离 ROS 合成发布、fault 停发和真实四路输入下的 unarmed 零 command 已验证；
+  arm、物理左右扰动确认、方向、单位、夹爪完整行程、enable 后运动和长时间稳定性均未验证。
 - 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改
   相机启动逻辑。
 

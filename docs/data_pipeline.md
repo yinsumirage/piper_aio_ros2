@@ -141,5 +141,6 @@ inspect -> HDF5 -> validate，得到 30/30 帧且 `action_source=executed`。
 意味着当前结果不能宣称真实完整 episode 录制已经通过。
 
 teleop 另在隔离 ROS domain 中验证了默认 unarmed 零 command、显式 arming 后左右均发布有界
-7D command、输入 stale 后停止；这不是硬件 ACK 或真实四臂运动验证。官方 reader 的 9D master
-接口已按源码实现 `joint7-joint8` 夹爪映射，但本机真实 master 的 name/数值仍待未使能只读确认。
+7D command、输入 stale 后停止；真实四路输入窗口也验证了 unarmed 时 4.02 秒左右均为零
+command。两路真实 master 已确认严格 9D name、占位 `gripper=0` 及 `joint7/joint8` 成对相反；
+这些仍不是硬件 ACK、夹爪物理标定或真实四臂运动验证。
