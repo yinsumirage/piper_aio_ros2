@@ -1,0 +1,14 @@
+[Unit]
+Description=Configure Piper gs_usb CAN interfaces
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+ConditionPathExists=/etc/piper/piper-can.conf
+
+[Service]
+Type=oneshot
+Environment=PIPER_CAN_CONF=/etc/piper/piper-can.conf
+ExecStart=/usr/local/sbin/piper-can-up
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

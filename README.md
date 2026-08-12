@@ -2,7 +2,8 @@
 
 面向 ROS 2 Humble 的独立 v0 采集包。当前目标是先复现
 [`piper-aio`](https://github.com/innovator-zero/piper-aio) 的三相机、双臂 episode
-采集交互和主要 HDF5 schema；它不会启动 Piper 驱动、配置 CAN、使能机械臂或控制硬件。
+采集交互和主要 HDF5 schema，并在本仓库维护四臂 CAN/ROS 编排。官方
+`piper_ros2` 保持独立干净，不在其中维护本机部署改动。
 
 ## v0 能做什么
 
@@ -40,6 +41,7 @@ python -c "import h5py, numpy, rclpy, cv_bridge, cv2"
 ```bash
 cd /home/engram/project/piper/piper_aio_ros2
 colcon build --symlink-install
+source /home/engram/project/piper/piper_ros2/install/setup.bash
 source install/setup.bash
 ```
 
@@ -52,6 +54,80 @@ ros2 launch piper_aio_ros2 collect.launch.py config:=/absolute/path/topics.yaml
 ```
 
 这两个命令只描述用法；构建或安装本包不会启动节点。
+
+## 四臂 CAN 部署
+
+2026-08-13 对实际 sysfs/udev 属性链的只读核对结果如下；四个接口当时均由内核
+`gs_usb` 驱动、处于 DOWN/STOPPED，尚未设置 bitrate：
+
+| 角色 | USB serial | 审计时接口 | 稳定接口 |
+|---|---|---|---|
+| 从左 | `002300374148570D20343133` | `can0` | `can_slave_l` |
+| 从右 | `003400204148570A20343133` | `can1` | `can_slave_r` |
+| 主左 | `004400314148570C20343133` | `can2` | `can_master_l` |
+| 主右 | `003B00234148570A20343133` | `can3` | `can_master_r` |
+
+`deploy/piper-can.conf` 是 serial、稳定接口名和 `BITRATE=1000000` 的部署事实源。
+先做无特权 dry-run：
+
+```bash
+cd /home/engram/project/piper/piper_aio_ros2
+./deploy/install_can.sh --dry-run --activate --enable-service
+./scripts/can_status.sh
+```
+
+安装前 `can_status.sh` 会准确显示当前 `can0..can3`，并因稳定名/bitrate/state 未就绪返回
+非零。`colcon build` 只把 ROS launch/config 安装进工作区；它不会写 `/etc`、reload
+udev、重命名或拉起 CAN，也不会安装/启用 systemd unit。
+
+由用户选择停机窗口后，唯一需要的 sudo 安装命令是：
+
+```bash
+sudo ./deploy/install_can.sh --activate --enable-service
+```
+
+该命令会先验证 root、命令依赖、配置重复项、Linux 15 字符接口名上限，以及四个已连接
+gs_usb 的 serial/当前状态；只有全部通过才安装下列文件：
+
+- `/etc/piper/piper-can.conf`
+- `/etc/udev/rules.d/70-piper-can.rules`
+- `/usr/local/sbin/piper-can-up`
+- `/etc/systemd/system/piper-can.service`
+
+`--activate` 只在接口 DOWN 且映射正确时把当前接口改为稳定名、设置 1 Mbps 并拉起；
+`--enable-service` 只启用 CAN 网络层的 oneshot service。脚本不会启动 ROS、publish CAN
+控制帧或使能机械臂。不带 `--activate` 时仅安装文件并 reload udev/systemd 配置，不改变
+当前接口；不带 `--enable-service` 时不设置开机拉起。
+
+## 四臂 ROS 编排
+
+官方 `piper` 包当前真实 executable 只有 `piper_read_slave_joint` 和
+`piper_single_ctrl`。前者只连接 CAN、读取反馈并发布 `JointState`，没有控制订阅、enable
+service 或 `auto_enable` 参数，因此用于主左/主右；后者用于从左/从右，配置中明确
+`auto_enable: false`。本仓库不 include 官方默认 `auto_enable=true` 的双臂 launch。
+
+```bash
+# 只解析参数，不启动节点
+ros2 launch piper_aio_ros2 four_arm.launch.py --show-args
+
+# 安装已完成、状态已人工复核后才由用户决定是否实际启动：
+# ros2 launch piper_aio_ros2 four_arm.launch.py
+```
+
+四个 namespace 和关键 endpoint：
+
+| namespace | 节点 | CAN | feedback | command |
+|---|---|---|---|---|
+| `/master_left` | `piper_read` | `can_master_l` | `joint_states` | 无 |
+| `/master_right` | `piper_read` | `can_master_r` | `joint_states` | 无 |
+| `/follower_left` | `piper_ctrl` | `can_slave_l` | `joint_states_feedback`, `end_pose`, `end_pose_stamped` | `joint_ctrl_cmd`, `pos_cmd`, `enable_flag`, `enable_srv` |
+| `/follower_right` | `piper_ctrl` | `can_slave_r` | `joint_states_feedback`, `end_pose`, `end_pose_stamped` | `joint_ctrl_cmd`, `pos_cmd`, `enable_flag`, `enable_srv` |
+
+官方控制节点的实际关节命令订阅名是 `joint_ctrl_single`；launch 只把它 remap 为稳定外部
+名 `joint_ctrl_cmd`。`joint_states_feedback`、`end_pose`、`end_pose_stamped` 均为官方实际相对
+topic，不做多余 remap。namespace 保证四臂 topic/service 不冲突。当前没有 teleop 节点，也没有
+`/can_mapping` topic；主臂反馈不会自动发送给从臂。`config/topics.yaml` 仅把采集器的 arm
+输入改到上述 namespaced feedback，相机 topic 未改。
 
 ## RealSense 当前边界
 
@@ -69,14 +145,13 @@ topic 前需要重新确认。
 |---|---|---|
 | front/left/right RGB | `/camera_f|l|r/color/image_raw` | `sensor_msgs/Image` |
 | front/left/right depth | `/camera_f|l|r/depth/image_raw` | `sensor_msgs/Image` |
-| follower left/right | `/joint_left`, `/joint_right` | `sensor_msgs/JointState` |
-| action left/right | `/joint_states_ctrl_left`, `/joint_states_ctrl_right` | `sensor_msgs/JointState` |
-| follower EEF left/right | `/end_pose_stamped_left`, `/end_pose_stamped_right` | `geometry_msgs/PoseStamped` |
+| follower left/right | `/follower_left/joint_states_feedback`, `/follower_right/joint_states_feedback` | `sensor_msgs/JointState` |
+| action left/right | `/master_left/joint_states`, `/master_right/joint_states` | `sensor_msgs/JointState` |
+| follower EEF left/right | `/follower_left/end_pose_stamped`, `/follower_right/end_pose_stamped` | `geometry_msgs/PoseStamped` |
 
-后三组默认值来自已检查的 `piper_ros2/src/piper/launch/start_two_piper.launch.py`。其中
-`/joint_states_ctrl_*` 是 Piper 控制命令回显，不是独立物理 leader 的测量；若系统存在真正的
-leader 发布者，必须把 `topics.leader_action_left/right` 改成对应的 `JointState` topic。YAML
-只包含 ROS topic，不包含 CAN 口或设备映射。
+后三组由 `four_arm.launch.py` 的 namespace/remap 提供。主臂使用官方只读节点的真实反馈，
+不再把从臂控制命令回显当作 leader 测量。采集 YAML 仍只包含 ROS topic；CAN serial/角色
+映射在 `deploy/piper-can.conf`，ROS 节点到稳定 CAN 名的参数在 `config/four_arm.yaml`。
 
 图像 contract 与旧 AIO 相同：RGB 必须为 `(480, 640, 3)`；depth 必须为
 `(480, 640)`。兼容旧相机路径时，`(400, 640)` depth 会在上下各补 40 行零。
@@ -114,7 +189,9 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
 - 未在真实相机、真实 leader/follower topic 或 Piper 硬件上运行。
 - 未验证不同设备时钟下的时间戳同步、实际图像 encoding、EEF 坐标系和 RPY 约定。
 - 未实现压缩图像、动态分辨率、rosbag 输入、完整 replay 发布或硬件安全系统。
-- ROS 2 官方双臂 launch 本身默认 `auto_enable=true`；本仓库不会启动它。硬件侧启动和
-  CAN/使能流程不属于本 v0。
+- 四臂 launch、udev/systemd 文件只做了静态、dry-run 和解析验证；本任务没有实际启动
+  ROS driver、改变 CAN、发送帧或使能机械臂。
+- 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改
+  相机启动逻辑。
 
 许可证与来源归属见 `LICENSE` 和 `NOTICE`。

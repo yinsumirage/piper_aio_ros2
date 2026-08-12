@@ -1,0 +1,26 @@
+# Exact node paths used by four_arm.launch.py.
+# piper_read_slave_joint has no auto_enable parameter; only the two control
+# nodes receive it, always false by default.
+/master_left/piper_read:
+  ros__parameters:
+    can_port: can_master_l
+    gripper_exist: true
+
+/master_right/piper_read:
+  ros__parameters:
+    can_port: can_master_r
+    gripper_exist: true
+
+/follower_left/piper_ctrl:
+  ros__parameters:
+    can_port: can_slave_l
+    auto_enable: false
+    gripper_exist: true
+    gripper_val_mutiple: 1
+
+/follower_right/piper_ctrl:
+  ros__parameters:
+    can_port: can_slave_r
+    auto_enable: false
+    gripper_exist: true
+    gripper_val_mutiple: 1
