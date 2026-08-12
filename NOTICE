@@ -1,0 +1,10 @@
+piper_aio_ros2 v0 follows the episode schema and collection interaction of
+piper-aio:
+  https://github.com/innovator-zero/piper-aio
+
+The reused schema and substantially adapted collection flow remain attributed
+to Copyright (c) 2026 Yuxiang Lu under the MIT License in LICENSE.
+
+The ROS 2 topic defaults were derived by inspection of AgileX Robotics'
+piper_ros Humble launch and node definitions. No piper_ros source code is
+copied into this repository.
