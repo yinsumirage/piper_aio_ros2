@@ -10,9 +10,9 @@
 |---|---|---|
 | 四路 CAN 稳定绑定 | 真机已验证 | 四路均为 1 Mbps、UP，且被动监听到真实流 |
 | 四臂 ROS 2 编排 | 部分验证 | launch/config 已构建；只受控读取过主左一路，未整体启动四臂图 |
-| 真机主从遥操作 | **尚未实现** | 仓库没有 teleop 节点或 command publisher；`four_arm.launch.py` 只是启动主臂读取节点和从臂驱动节点 |
+| 真机主从遥操作 | 离线实现，真机未验证 | 默认 unarmed bridge、纯单测和隔离 ROS 已通过；未连接、使能或移动四臂 |
 | RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
-| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 19 个 Python 测试通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
+| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 34 个 Python 测试通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
 | 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
 | 硬件 replay | **未实现，刻意禁用** | 当前 replay 只读 shape；`--execute` 明确拒绝，不创建 publisher |
 
@@ -38,41 +38,48 @@ teleop bridge 和三相机 topic 是真实录包的两个前置条件，可以�
 
 ## P0：先修正真实图上的录包门禁
 
-- [ ] 修正 `bag_preflight` 的 control-topic 检查。官方从臂节点会发布
-  `/follower_left/joint_ctrl` 和 `/follower_right/joint_ctrl` 作为控制反馈；当前按名称匹配
-  `joint_ctrl` 的启发式检查会把它们误报成额外 command publisher，真实四臂图上可能阻止录包。
-- [ ] 增加回归测试：允许已知官方反馈 topic；仍拒绝未知的 enable、position command 或额外
+- [x] 修正 `bag_preflight` 的 control-topic 检查。官方从臂节点会发布
+  `/follower_left/joint_ctrl` 和 `/follower_right/joint_ctrl` 作为控制反馈；旧版按名称匹配
+  `joint_ctrl` 的启发式检查会把它们误报成额外 command publisher。
+- [x] 增加回归测试：允许已知官方反馈 topic；仍拒绝未知的 enable、position command 或额外
   joint command publisher。
 - [ ] 在隔离 ROS domain 中同时模拟官方反馈 topic 和 11 个白名单 topic，确认 preflight、
   file/zstd 录包、inspect、HDF5 和 validate 全部通过。
+
+其中“11 个白名单 publisher + 两个官方反馈 topic 的 preflight”已通过；本轮没有重复后续
+file/zstd → HDF5 链，因为该链已有独立合成证据，尚未重跑二者组合。
 
 验收：真实驱动节点存在时，preflight 只因真正缺流、类型错误、磁盘不足或未授权的 command
 publisher 失败，不因官方反馈 topic 误报。
 
 ## P0：实现默认不动作的双臂 teleop bridge
 
-- [ ] 新增最小 `teleop` 节点、配置和独立 launch；不要把控制默认塞进 `four_arm.launch.py`。
-- [ ] 输入固定为 `/master_left/joint_states`、`/master_right/joint_states` 和两路 follower feedback；
+- [x] 新增最小 `teleop` 节点、配置和独立 launch；不要把控制默认塞进 `four_arm.launch.py`。
+- [x] 输入固定为 `/master_left/joint_states`、`/master_right/joint_states` 和两路 follower feedback；
   输出固定为 `/follower_left/joint_ctrl_cmd`、`/follower_right/joint_ctrl_cmd`。
-- [ ] 按 `JointState.name` 把官方主臂 9 维消息转换成 follower 需要的 7 维
+- [x] 按 `JointState.name` 把官方主臂 9 维消息转换成 follower 需要的 7 维
   `joint1..joint6,gripper`；gripper 必须使用 `joint7 - joint8`，不能直接取主臂第 7 个
   `gripper` 占位值。
-- [ ] 明确生成 follower 驱动使用的 `velocity[6]` 速度百分比和 `effort[6]` 夹爪力参数。
+- [x] 明确生成 follower 驱动使用的 `velocity[6]` 速度百分比和 `effort[6]` 夹爪力参数。
   不能原样转发 9 维 master 消息：官方驱动会把第 7 个 position 当夹爪，并可能退回 100%
   速度。
-- [ ] 默认 `armed=false`，未显式 arming 时不发布任何 command；bridge 永不自动调用
+- [x] 默认 `armed=false`，未显式 arming 时不发布任何 command；bridge 永不自动调用
   `/follower_*/enable_srv`，从臂硬件使能保持独立、显式操作。
-- [ ] command 发布前同时满足：左右 master 新鲜、左右 follower feedback 新鲜、消息 finite、
+- [x] command 发布前同时满足：左右 master 新鲜、左右 follower feedback 新鲜、消息 finite、
   关节名称完整、主从初始差小于配置阈值。
-- [ ] 加入保守且可配置的关节限位、单步最大变化、夹爪范围、发布频率和输入超时。超时或异常后
+- [x] 加入保守且可配置的关节限位、单步最大变化、夹爪范围、发布频率和输入超时。超时或异常后
   停止发布并锁存 fault，必须人工重新 arming。
-- [ ] 让录包中的 `executed_action_*` 精确记录 bridge 实际发布的 7 维 command。这里的
+- [x] 让录包中的 `executed_action_*` 精确记录 bridge 实际发布的 7 维 command。这里的
   `executed` 仍表示“已发给驱动的 commanded action”，不是电机 ACK；物理跟踪看 follower state。
-- [ ] 纯函数测试覆盖：乱序 9D 映射、夹爪、左右隔离、限位、单步限制、stale、初始不对齐、
+- [x] 纯函数测试覆盖：乱序 9D 映射、夹爪、左右隔离、限位、单步限制、stale、初始不对齐、
   unarmed 零发布；再用隔离 ROS domain 做无硬件 topic/rate 测试。
 
 验收：不连接或不使能从臂也能证明节点默认零 command；合成 master 输入在显式 arming 后只产生
 受限的 7D command；stale、越界和解除 arming 均立即停止新 command。
+
+四条物理臂的夹爪存在由用户确认，四处 `gripper_exist` 保持 `true`。9D → 7D 路径按官方源码
+实现并作为 teleop 主路径；本机真实 master topic 的 name、维度和夹爪值仍待未使能只读确认，
+不能把源码接口写成已观测真机事实。
 
 ## P0：固定三台 RealSense 的物理角色
 

@@ -9,6 +9,8 @@
   dry-run replay 和纯 Python 测试。
 - `0306f53652ac02aa52f28d74a19cb838397df572`：加入四臂 CAN 稳定命名、部署脚本、ROS
   namespace 编排和 CAN 配置解析测试。
+- `c8607f7e538a6104397e6481dfa45d36a994c13a`：精确放行两条官方 follower control-feedback
+  topic，同时继续拒绝未授权 command/enable publisher。
 
 ## 已验证
 
@@ -21,14 +23,23 @@
   200 Hz。该结果不外推到其余三路。
 - 官方 `piper_read_slave_joint` 初始化期间观察到 13 个查询帧。它们不是运动帧或使能帧，
   检查中没有使能或运动机械臂；但这是非零 TX，因此该节点不能称为严格被动监听。
+- 当前代码的 34 个 Python 测试（另含 8 个 subtest）通过；teleop 覆盖严格 9D 名称映射、
+  `joint7-joint8` 夹爪、双侧原子 arming、初始对齐、限位、step、stale 和 fault latch。
+- 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command，显式 arm 后两路均
+  收到有界 7D command，停止输入后 stale 锁存并停发，退出无残留进程。
+- 另一隔离 ROS 图以 11 个白名单 publisher 加两条官方 `/follower_*/joint_ctrl` 反馈运行真实
+  `bag_preflight`，检查成功且没有 unexpected control publisher；退出无残留进程。
+- `colcon build --symlink-install` 和现有 `colcon test` 命令成功，teleop/four-arm launch 参数解析
+  成功。现有 setuptools test 入口打印 `Ran 0 tests`，因此 Python 覆盖证据以单独 pytest 为准。
 
 ## 已停止或未继续
 
 - 其余三路 ROS 解码没有继续验证；没有据此宣称四臂 ROS 链路已打通。
-- `four_arm.launch.py` 未整体启动；`piper_single_ctrl`、teleop、控制 topic 和 enable service
-  未作为本轮验证的一部分运行。
+- `four_arm.launch.py` 未整体启动；真实 `piper_single_ctrl`、CAN、enable service 和真实 ROS
+  domain command publisher 未运行。teleop 只在隔离 domain 用合成消息验证。
 - 相机未完成 serial 绑定和图像 topic 验证。
-- EEF 坐标系、四元数到 RPY 约定、夹爪第 7 维和跨设备时间同步未验证。
+- EEF 坐标系、四元数到 RPY 约定和跨设备时间同步未验证。用户确认四条物理臂均有夹爪；官方
+  reader 源码在 `gripper_exist: true` 时构造 9D，但本机 master 的真实 name/维度/数值仍未观测。
 - 尚未完成包含三相机、双 follower、双 leader action 和双 EEF 的完整 episode 录制、保存、
   读回与内容审计。
 
@@ -38,3 +49,5 @@
 - `can_status.sh` 只证明部署映射和网络层状态。
 - 被动 CAN 流不证明 ROS 解码正确；单路 `JointState` 不证明其余三路或完整采集正确。
 - replay 当前只读 HDF5 并打印 shape；即使传 `--execute` 也会拒绝，不是硬件回放验证。
+- teleop 的隔离 ROS command 只证明桥接器发布合同和安全门禁，不证明驱动消费、硬件 enable、
+  方向/单位、夹爪行程、跟踪精度、电机 ACK 或真实运动安全。

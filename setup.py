@@ -20,12 +20,13 @@ setup(
     zip_safe=True,
     maintainer="yinsumirage",
     maintainer_email="yinsumirage@gmail.com",
-    description="Minimal ROS 2 Piper AIO collection and dry-run replay tools",
+    description="Piper AIO collection, explicitly armed dual-arm teleop, and dry-run replay tools",
     license="MIT",
     entry_points={
         "console_scripts": [
             "collect = piper_aio_ros2.collect:main",
             "replay = piper_aio_ros2.replay:main",
+            "teleop = piper_aio_ros2.teleop:main",
             "bag_preflight = piper_aio_ros2.bag_preflight:main",
             "bag_inspect = piper_aio_ros2.bag_inspect:main",
             "bag_to_hdf5 = piper_aio_ros2.bag_to_hdf5:main",

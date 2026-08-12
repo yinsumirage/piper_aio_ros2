@@ -1,0 +1,19 @@
+/dual_arm_teleop:
+  ros__parameters:
+    # Safety gates, not claims about Piper physical limits. Calibrate on hardware.
+    publish_hz: 30.0
+    stale_timeout_sec: 0.2
+    max_joint_abs_rad: 3.0
+    max_gripper_abs_m: 0.07
+    initial_joint_error_rad: 0.10
+    initial_gripper_error_m: 0.01
+    max_joint_step_rad: 0.05
+    max_gripper_step_m: 0.005
+    speed_percent: 10.0
+    gripper_effort: 0.5
+    topics.master_left: /master_left/joint_states
+    topics.master_right: /master_right/joint_states
+    topics.follower_left: /follower_left/joint_states_feedback
+    topics.follower_right: /follower_right/joint_states_feedback
+    topics.command_left: /follower_left/joint_ctrl_cmd
+    topics.command_right: /follower_right/joint_ctrl_cmd

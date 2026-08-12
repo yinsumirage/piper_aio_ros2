@@ -24,6 +24,10 @@ canonical HDF5 schema v1，再导出为本地 LeRobot Dataset v3。录包和转�
 
 默认不录 depth。运行前 preflight 会以 JSON 检查 topic 存在、类型、publisher、磁盘空间及
 输出目录；缺相机时明确失败。输出目录已存在时脚本拒绝覆盖，录包使用 zstd file compression。
+control-topic 检查只放行白名单以及两个精确的官方反馈 topic
+`/follower_left/joint_ctrl`、`/follower_right/joint_ctrl`；其他 `joint_ctrl`、`pos_cmd`、
+`gripper_ctrl`、`enable_flag` 或 `/control/` publisher 仍会阻止录包。隔离 ROS 图已用 11 个
+白名单 publisher 加这两条官方反馈做过回归，未连接驱动或 CAN。
 
 ```bash
 conda activate piper
@@ -75,7 +79,8 @@ executed stream，转换只有在显式 `--allow-intent-only` 时才生成 inten
 `action_source=intent` 且 `executed_valid=false`，不会冒充已执行动作。
 
 这里的 executed 是实际发布给 follower 控制节点的 commanded action，不是电机已经执行该动作的
-闭环测量或 ACK；物理跟踪结果仍以 follower state 为准。
+闭环测量或 ACK；当前 teleop bridge 的两路 command publisher 正是 executed stream 的来源，
+物理跟踪结果仍以 follower state 为准。
 
 转换采用 30 Hz 固定网格。RGB 最近邻容差 20 ms，state/EEF 最近邻容差 10 ms；intent 和
 executed 只因果选择目标时刻之前最近一条，容差 20 ms，绝不选择未来 action。优先使用正数
@@ -134,3 +139,7 @@ inspect -> HDF5 -> validate，得到 30/30 帧且 `action_source=executed`。
 真实相机输入和长 episode 的端到端处理尚未验证；上述压缩 bag 验证使用合成数据，不代表真实
 相机链路。三台相机 serial 物理映射也仍待设备接入后确认。这些限制不影响离线合同测试，但
 意味着当前结果不能宣称真实完整 episode 录制已经通过。
+
+teleop 另在隔离 ROS domain 中验证了默认 unarmed 零 command、显式 arming 后左右均发布有界
+7D command、输入 stale 后停止；这不是硬件 ACK 或真实四臂运动验证。官方 reader 的 9D master
+接口已按源码实现 `joint7-joint8` 夹爪映射，但本机真实 master 的 name/数值仍待未使能只读确认。

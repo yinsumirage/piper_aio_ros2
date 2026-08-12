@@ -7,7 +7,8 @@
 三个官方仓库必须保持干净，本仓库不回写它们。
 
 截至 2026-08-13，四路稳定 CAN 接口及被动真实流已验证，主左只读 ROS 路径已做一次
-受控检查；相机、EEF、其余三路 ROS 解码和完整 episode 尚未验证。可审计边界见
+受控检查；双臂 teleop 已完成纯逻辑和隔离 ROS 合成验证，但没有连接、使能或移动真机；
+相机、EEF、其余三路 ROS 解码和完整 episode 尚未验证。可审计边界见
 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
 rosbag、canonical HDF5 与 LeRobot Dataset v3 的闭环用法见 [`docs/data_pipeline.md`](docs/data_pipeline.md)；
@@ -22,6 +23,7 @@ rosbag、canonical HDF5 与 LeRobot Dataset v3 的闭环用法见 [`docs/data_pi
 - 交互保持旧流程：ENTER 开始、SPACE 停止、`s` 保存、`q` 丢弃。
 - 数据校验和 HDF5 保存位于纯 Python 模块，可在没有 `rclpy`/硬件时测试。
 - replay 只有只读预览；默认 dry-run，v0 即使传 `--execute` 也会拒绝执行。
+- 双臂 teleop 独立启动且永远从 unarmed 开始；只有显式服务 arming 且四路状态安全时才发布。
 
 在线采集把同一次 snapshot 的 observation 与 leader intent 写入同一帧；当前在线路径没有
 executed command 输入，因此保存的 episode 会明确标记为 intent-only。
@@ -158,9 +160,51 @@ ros2 launch piper_aio_ros2 four_arm.launch.py --show-args
 
 官方控制节点的实际关节命令订阅名是 `joint_ctrl_single`；launch 只把它 remap 为稳定外部
 名 `joint_ctrl_cmd`。`joint_states_feedback`、`end_pose`、`end_pose_stamped` 均为官方实际相对
-topic，不做多余 remap。namespace 保证四臂 topic/service 不冲突。当前没有 teleop 节点，也没有
-`/can_mapping` topic；主臂反馈不会自动发送给从臂。`config/topics.yaml` 仅把采集器的 arm
+topic，不做多余 remap。namespace 保证四臂 topic/service 不冲突。teleop 不包含在
+`four_arm.launch.py` 中，驱动启动不会自动开始遥操作；也没有 `/can_mapping` topic。
+`config/topics.yaml` 仅把采集器的 arm
 输入改到上述 namespaced feedback，相机 topic 未改。
+
+## 安全双臂 teleop（仅代码和隔离 ROS 已验证）
+
+`teleop.launch.py` 单独启动 `/dual_arm_teleop`。节点默认且固定从 unarmed 开始，不调用
+`/follower_*/enable_srv`，也不修改 `auto_enable: false`。两侧共同 arming：缺任一 master 或
+follower、输入不新鲜、名称/维度/finite 检查失败、初始关节或夹爪未对齐时，整体拒绝。
+
+官方 reader 源码在 `gripper_exist: true` 时构造 9D
+`joint1..joint6,gripper,joint7,joint8`；其中 `gripper` 为占位，bridge 用
+`joint7-joint8` 生成 7D `joint1..joint6,gripper`。四条物理臂均有夹爪，配置保持四处
+`gripper_exist: true`。但本机真实 master topic 的 name、维度和夹爪数值尚未做未使能只读确认，
+所以 9D 是“按官方源码和用户物理确认实现”，不是“本机消息已真机验证”。映射器能严格解析
+6D reader 输出用于兼容诊断，但 teleop arming 必须有 9D 夹爪输入，绝不会给第 7 维补零。
+
+command 显式填写 `velocity[6]=speed_percent` 和 `effort[6]=gripper_effort`，不触发官方节点的
+100% 速度回退。任一侧 stale、非有限、绝对值越界、schema 改变或单步跳变会停止后续双侧发布并
+锁存 fault；必须显式 disarm（同时清空旧输入）后，重新收到四路新鲜数据才能再次 arm。
+`config/teleop.yaml` 的默认阈值只是保守的软件门禁，不是 Piper 物理极限，必须在真机阶段标定。
+
+以下是真机获批后的操作顺序，本任务没有执行这些命令：
+
+```bash
+# 1. 先按获批流程启动驱动；auto_enable 仍为 false
+ros2 launch piper_aio_ros2 four_arm.launch.py
+
+# 2. 另一个终端单独启动 bridge；此时不会发布 command
+ros2 launch piper_aio_ros2 teleop.launch.py
+
+# 3. 四路输入新鲜且主从人工对齐后，才显式 arm
+ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: true}"
+
+# 4. 正常停止或 fault 后都先显式 disarm
+ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: false}"
+```
+
+硬件 enable/disable 是上述 bridge arming 之外的独立人工操作，bridge 永不代办。第一次真机验收
+必须逐阶段重新授权：清空从臂工作区并保证急停可触达；硬件未使能时先核对四路 name/单位/夹爪
+和 unarmed 零 command；仍未使能时短暂 arm 检查两路 7D command、10% 速度字段和夹爪 effort，
+随即 disarm；然后依次仅使能左侧、仅使能右侧做单关节与夹爪小幅动作；两侧分别通过后才做双侧
+低速短时测试。任何左右串线、方向/单位错误、未 arm 出现 command、超阈值、跟踪突变、stale
+未停发、disarm 失败或异常 enable 都立即停止，disarm bridge 并由人工独立 disable 硬件。
 
 ## RealSense 当前边界
 
@@ -241,6 +285,8 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
 - 未实现压缩图像、动态分辨率、rosbag 输入、完整 replay 发布或硬件安全系统。
 - CAN 系统部署和四路被动流已验证；四臂 launch 只做静态/解析验证，未整体启动。
   主左只读 ROS 路径单独检查过，初始化有非零查询 TX；未使能或运动机械臂。
+- teleop 的纯逻辑、隔离 ROS 合成发布和 fault 停发已验证；真实四臂 topic、方向、单位、夹爪、
+  enable 后运动和长时间稳定性均未验证。
 - 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改
   相机启动逻辑。
 
