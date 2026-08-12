@@ -4,4 +4,16 @@ log/
 __pycache__/
 *.py[cod]
 *.hdf5
+*.h5
+*.bag
+*.db3
+*.mcap
+*.mp4
+/bags/
+/data/
+/dataset/
+/datasets/
+/episode/
+/episodes/
+/images/
 .pytest_cache/

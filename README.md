@@ -1,9 +1,14 @@
 # piper_aio_ros2
 
-面向 ROS 2 Humble 的独立 v0 采集包。当前目标是先复现
+面向 ROS 2 Humble 的独立采集与四臂编排仓库。它复现
 [`piper-aio`](https://github.com/innovator-zero/piper-aio) 的三相机、双臂 episode
-采集交互和主要 HDF5 schema，并在本仓库维护四臂 CAN/ROS 编排。官方
-`piper_ros2` 保持独立干净，不在其中维护本机部署改动。
+交互和主要 HDF5 schema，并把本机 CAN 部署、ROS namespace 与采集配置集中在这里。
+官方 `piper_ros2` 提供驱动，`piper-aio` 提供旧采集参考，`piper_sdk` 提供底层 SDK；
+三个官方仓库必须保持干净，本仓库不回写它们。
+
+截至 2026-08-13，四路稳定 CAN 接口及被动真实流已验证，主左只读 ROS 路径已做一次
+受控检查；相机、EEF、其余三路 ROS 解码和完整 episode 尚未验证。可审计边界见
+[`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
 ## v0 能做什么
 
@@ -45,6 +50,18 @@ source /home/engram/project/piper/piper_ros2/install/setup.bash
 source install/setup.bash
 ```
 
+目录只保留运行所需的几层：
+
+| 路径 | 用途 |
+|---|---|
+| `config/` | CAN 角色对应的 ROS 节点参数和采集 topics |
+| `deploy/` | 一次性 CAN udev/systemd 部署文件与安装器 |
+| `launch/` | 四臂节点编排和交互式采集入口 |
+| `piper_aio_ros2/` | 采集、HDF5 episode 和只读 replay 实现 |
+| `scripts/` | 日常只读状态检查 |
+| `test/` | CAN 配置解析和 episode schema 测试 |
+| `docs/PROGRESS.md` | 已验证事实、限制和下一步 |
+
 采集节点必须在交互式终端运行。先检查并修改 `config/topics.yaml`，再运行：
 
 ```bash
@@ -57,8 +74,8 @@ ros2 launch piper_aio_ros2 collect.launch.py config:=/absolute/path/topics.yaml
 
 ## 四臂 CAN 部署
 
-2026-08-13 对实际 sysfs/udev 属性链的只读核对结果如下；四个接口当时均由内核
-`gs_usb` 驱动、处于 DOWN/STOPPED，尚未设置 bitrate：
+2026-08-13 先通过 sysfs/udev 属性链识别四个 `gs_usb` 设备，随后完成系统部署验证：
+稳定接口名、1 Mbps bitrate 和 UP 状态均与配置一致。
 
 | 角色 | USB serial | 审计时接口 | 稳定接口 |
 |---|---|---|---|
@@ -98,6 +115,18 @@ gs_usb 的 serial/当前状态；只有全部通过才安装下列文件：
 `--enable-service` 只启用 CAN 网络层的 oneshot service。脚本不会启动 ROS、publish CAN
 控制帧或使能机械臂。不带 `--activate` 时仅安装文件并 reload udev/systemd 配置，不改变
 当前接口；不带 `--enable-service` 时不设置开机拉起。
+
+安装后日常检查不需要 sudo，也不会发送 CAN 或机械臂命令：
+
+```bash
+cd /home/engram/project/piper/piper_aio_ros2
+./scripts/can_status.sh
+systemctl status --no-pager piper-can.service
+ip -details link show can_master_l
+```
+
+`can_status.sh` 只证明 serial、接口名、bitrate 和 UP 状态正确；业务帧含义仍需单独验证。
+2026-08-13 曾用超时保护的被动监听确认四路都有真实流，详见进展文档。
 
 ## 四臂 ROS 编排
 
@@ -184,13 +213,30 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
 两者只读取并报告 shape，不创建 ROS publisher。`--execute` 是显式的未来执行门，但 v0
 会直接报错且不发送任何命令；真正发布路径尚未实现。
 
+## 安全边界与常见诊断
+
+- 未获明确授权时，不运行 `piper_single_ctrl`、teleop 或 `four_arm.launch.py`，不调用 enable
+  service，也不发布控制 topic。`auto_enable: false` 不是完整的硬件安全系统。
+- `piper_read_slave_joint` 没有运动或使能订阅，但初始化会发送查询帧；它不是零 TX 的被动
+  监听器。需要严格被动检查时使用有 timeout 的 `candump`。
+- CAN 异常先运行 `./scripts/can_status.sh`，再看
+  `systemctl status --no-pager piper-can.service` 和对应接口的 `ip -details link show`；
+  不要先重启服务或重插映射。
+- ROS 命令不存在时，依次确认 `conda activate piper`、`source /opt/ros/humble/setup.bash`、
+  `source /home/engram/project/piper/piper_ros2/install/setup.bash` 和本仓库
+  `source install/setup.bash`。
+- 只有节点已获授权且正在运行时，才用 `ros2 topic list`、`ros2 topic info <topic>` 和
+  `ros2 topic hz <topic>` 做只读检查；不要为诊断启动控制节点。
+- 采集一直等待时，逐项确认三个 RGB、四个 JointState 和两个 PoseStamped topic 均有消息，
+  且消息时间戳、图像 shape 和关节向量长度符合 contract。
+
 ## 尚未验证 / v0 边界
 
-- 未在真实相机、真实 leader/follower topic 或 Piper 硬件上运行。
+- 未在真实相机、完整 leader/follower/EEF topic 组合上录制并保存 episode。
 - 未验证不同设备时钟下的时间戳同步、实际图像 encoding、EEF 坐标系和 RPY 约定。
 - 未实现压缩图像、动态分辨率、rosbag 输入、完整 replay 发布或硬件安全系统。
-- 四臂 launch、udev/systemd 文件只做了静态、dry-run 和解析验证；本任务没有实际启动
-  ROS driver、改变 CAN、发送帧或使能机械臂。
+- CAN 系统部署和四路被动流已验证；四臂 launch 只做静态/解析验证，未整体启动。
+  主左只读 ROS 路径单独检查过，初始化有非零查询 TX；未使能或运动机械臂。
 - 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改
   相机启动逻辑。
 
