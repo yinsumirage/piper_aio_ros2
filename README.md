@@ -10,6 +10,8 @@
 受控检查；相机、EEF、其余三路 ROS 解码和完整 episode 尚未验证。可审计边界见
 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
+rosbag、canonical HDF5 与 LeRobot Dataset v3 的闭环用法见 [`docs/data_pipeline.md`](docs/data_pipeline.md)。
+
 ## v0 能做什么
 
 - `rclpy` 订阅三路 RGB，可选三路 depth；图像使用 ROS 2 sensor-data QoS。
@@ -20,8 +22,8 @@
 - 数据校验和 HDF5 保存位于纯 Python 模块，可在没有 `rclpy`/硬件时测试。
 - replay 只有只读预览；默认 dry-run，v0 即使传 `--execute` 也会拒绝执行。
 
-v0 有意保留旧采集器的时序配对：第一帧 observation 先缓存，之后把上一帧 observation
-与当前帧 action 配对，最后一个 observation 不写入。是否修正这一时序需用真实数据验证后再决定。
+在线采集把同一次 snapshot 的 observation 与 leader intent 写入同一帧；当前在线路径没有
+executed command 输入，因此保存的 episode 会明确标记为 intent-only。
 
 ## 依赖与构建
 

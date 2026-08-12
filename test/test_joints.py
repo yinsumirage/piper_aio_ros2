@@ -2,7 +2,12 @@ import math
 from types import SimpleNamespace
 import unittest
 
-from piper_aio_ros2.joints import JOINT_ORDER, canonical_joint_state, canonical_values
+from piper_aio_ros2.joints import (
+    JOINT_ORDER,
+    LEGACY_JOINT_ORDER,
+    canonical_joint_state,
+    canonical_values,
+)
 
 
 class CanonicalJointTest(unittest.TestCase):
@@ -10,6 +15,14 @@ class CanonicalJointTest(unittest.TestCase):
         names = list(reversed(JOINT_ORDER))
         values = list(reversed(range(7)))
         self.assertEqual(canonical_values(names, values, "position"), tuple(float(i) for i in range(7)))
+
+    def test_legacy_zero_based_names_are_mapped_and_unordered(self):
+        names = ("joint6", "joint2", "joint0", "joint5", "joint1", "joint4", "joint3")
+        by_name = {name: float(index + 10) for index, name in enumerate(LEGACY_JOINT_ORDER)}
+        values = [by_name[name] for name in names]
+        self.assertEqual(canonical_values(names, values, "position"), tuple(float(i) for i in range(10, 17)))
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            canonical_values((), range(7), "position")
 
     def test_nine_dimensional_gripper_pair_wins_over_placeholder(self):
         message = SimpleNamespace(

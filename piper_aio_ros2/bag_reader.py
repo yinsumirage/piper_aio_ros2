@@ -8,9 +8,20 @@ from .sync import message_time_ns
 def open_reader(bag_path):
     import rosbag2_py
 
-    reader = rosbag2_py.SequentialReader()
+    metadata = rosbag2_py.Info().read_metadata(str(bag_path), "")
+    compressed = (
+        bool(str(metadata.compression_format).strip())
+        and str(metadata.compression_mode).strip().upper() in ("FILE", "MESSAGE")
+    )
+    reader_type = (
+        rosbag2_py.SequentialCompressionReader if compressed
+        else rosbag2_py.SequentialReader
+    )
+    reader = reader_type()
     reader.open(
-        rosbag2_py.StorageOptions(uri=str(bag_path), storage_id=""),
+        rosbag2_py.StorageOptions(
+            uri=str(bag_path), storage_id=metadata.storage_identifier
+        ),
         rosbag2_py.ConverterOptions(input_serialization_format="", output_serialization_format=""),
     )
     return reader

@@ -4,6 +4,7 @@ import math
 
 
 JOINT_ORDER = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "gripper")
+LEGACY_JOINT_ORDER = tuple(f"joint{index}" for index in range(7))
 DUAL_JOINT_ORDER = tuple(f"left_{name}" for name in JOINT_ORDER) + tuple(
     f"right_{name}" for name in JOINT_ORDER
 )
@@ -23,8 +24,9 @@ def canonical_values(names, values, field, allow_missing=False):
         raise ValueError(f"{field} is missing")
 
     by_name = dict(zip(names, values))
+    legacy = len(names) == 7 and set(names) == set(LEGACY_JOINT_ORDER)
     result = []
-    for name in JOINT_ORDER[:-1]:
+    for name in LEGACY_JOINT_ORDER[:-1] if legacy else JOINT_ORDER[:-1]:
         if name not in by_name:
             if allow_missing:
                 result.append(0.0)
@@ -32,7 +34,9 @@ def canonical_values(names, values, field, allow_missing=False):
             raise ValueError(f"{field} is missing {name}")
         result.append(float(by_name[name]))
 
-    if "joint7" in by_name and "joint8" in by_name:
+    if legacy:
+        result.append(float(by_name[LEGACY_JOINT_ORDER[-1]]) if LEGACY_JOINT_ORDER[-1] in by_name else 0.0)
+    elif "joint7" in by_name and "joint8" in by_name:
         result.append(float(by_name["joint7"]) - float(by_name["joint8"]))
     elif "gripper" in by_name:
         result.append(float(by_name["gripper"]))

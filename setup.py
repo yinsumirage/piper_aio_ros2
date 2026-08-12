@@ -18,8 +18,8 @@ setup(
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    maintainer="engram",
-    maintainer_email="engram@example.com",
+    maintainer="yinsumirage",
+    maintainer_email="yinsumirage@gmail.com",
     description="Minimal ROS 2 Piper AIO collection and dry-run replay tools",
     license="MIT",
     entry_points={

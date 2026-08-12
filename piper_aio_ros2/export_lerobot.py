@@ -29,8 +29,6 @@ EEF_ORDER = tuple(f"{side}_{name}" for side in ("left", "right") for name in (
 def export(episodes, output, repo_id, task, allow_intent_only=False):
     if version("lerobot") != "0.6.0":
         raise RuntimeError(f"requires lerobot==0.6.0, found {version('lerobot')}")
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
     output = Path(output).expanduser().resolve()
     if output.exists():
         raise FileExistsError(output)
@@ -39,6 +37,7 @@ def export(episodes, output, repo_id, task, allow_intent_only=False):
         raise ValueError("at least one HDF5 episode is required")
 
     fps = None
+    action_source = None
     for path in episode_paths:
         report = validate(path)
         if not report["ok"]:
@@ -47,6 +46,10 @@ def export(episodes, output, repo_id, task, allow_intent_only=False):
             source = root.attrs["action_source"]
             if source != "executed" and not allow_intent_only:
                 raise ValueError(f"{path} is {source}; pass --allow-intent-only to export it")
+            if action_source is None:
+                action_source = source
+            elif source != action_source:
+                raise ValueError("all episodes must use the same action_source")
             episode_fps = float(root.attrs["fps"])
             fps = episode_fps if fps is None else fps
             if episode_fps != fps:
@@ -56,6 +59,8 @@ def export(episodes, output, repo_id, task, allow_intent_only=False):
     if not float(fps).is_integer():
         raise ValueError("LeRobotDataset requires integer fps")
 
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
     features = {
         "observation.state": {"dtype": "float32", "shape": (14,), "names": list(DUAL_JOINT_ORDER)},
         "observation.eef_pose": {"dtype": "float32", "shape": (14,), "names": list(EEF_ORDER)},
@@ -63,7 +68,7 @@ def export(episodes, output, repo_id, task, allow_intent_only=False):
     }
     for camera in CAMERAS:
         features[f"observation.images.{camera}"] = {
-            "dtype": "image",
+            "dtype": "video",
             "shape": (3, RGB_SHAPE[0], RGB_SHAPE[1]),
             "names": ["channels", "height", "width"],
         }
@@ -73,7 +78,7 @@ def export(episodes, output, repo_id, task, allow_intent_only=False):
         features=features,
         root=output,
         robot_type="piper_dual_arm",
-        use_videos=False,
+        use_videos=True,
     )
     try:
         for path in episode_paths:
