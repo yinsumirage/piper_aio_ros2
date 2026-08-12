@@ -18,6 +18,7 @@ from rclpy.qos import QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import Image, JointState
 
 from .episode import EpisodeBuffer, next_episode_index
+from .joints import canonical_joint_state
 
 
 STREAM_PARAMETERS = {
@@ -141,17 +142,8 @@ class Collector(Node):
         for name, queue in self.queues.items():
             while queue[0][0] < frame_time:
                 queue.popleft()
-            messages[name] = queue.popleft()[1]
-        return messages
-
-    @staticmethod
-    def _seven(values, name, allow_padding=False):
-        array = np.asarray(values, dtype=np.float64).reshape(-1)
-        if allow_padding and array.size < 7:
-            array = np.pad(array, (0, 7 - array.size))
-        if array.size < 7:
-            raise ValueError(f"{name} needs at least 7 values, got {array.size}")
-        return array[:7]
+            messages[name] = queue.popleft()
+        return frame_time, messages
 
     def _image(self, message, depth=False):
         image = np.asarray(self.bridge.imgmsg_to_cv2(message, desired_encoding="passthrough"))
@@ -168,22 +160,27 @@ class Collector(Node):
         yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
         return roll, pitch, yaw
 
-    def _eef(self, message, joint_state):
+    def _eef(self, message, canonical_position):
         pose = message.pose
         roll, pitch, yaw = self._rpy(pose)
-        gripper = self._seven(joint_state.position, "follower position")[6]
+        gripper = canonical_position[6]
         return np.array([pose.position.x, pose.position.y, pose.position.z, roll, pitch, yaw, gripper])
 
     def snapshot(self):
-        messages = self._synced_messages()
-        if messages is None:
+        synced = self._synced_messages()
+        if synced is None:
             return None
-        follower_left = messages["follower_joint_left"]
-        follower_right = messages["follower_joint_right"]
-        action_left = self._seven(messages["leader_action_left"].position, "left action")
-        action_right = self._seven(messages["leader_action_right"].position, "right action")
-        qpos_left = self._seven(follower_left.position, "left qpos")
-        qpos_right = self._seven(follower_right.position, "right qpos")
+        frame_ns, stamped = synced
+        messages = {name: pair[1] for name, pair in stamped.items()}
+        source_ns = {name: pair[0] for name, pair in stamped.items()}
+        follower_left = canonical_joint_state(messages["follower_joint_left"])
+        follower_right = canonical_joint_state(messages["follower_joint_right"])
+        leader_left = canonical_joint_state(messages["leader_action_left"])
+        leader_right = canonical_joint_state(messages["leader_action_right"])
+        action_left = np.asarray(leader_left["position"])
+        action_right = np.asarray(leader_right["position"])
+        qpos_left = np.asarray(follower_left["position"])
+        qpos_right = np.asarray(follower_right["position"])
         if any(np.allclose(values, 0.0) for values in (qpos_left, qpos_right, action_left, action_right)):
             raise ValueError("all-zero follower qpos or leader action")
 
@@ -196,20 +193,20 @@ class Collector(Node):
             "qpos": np.concatenate((qpos_left, qpos_right)),
             "qvel": np.concatenate(
                 (
-                    self._seven(follower_left.velocity, "left qvel", allow_padding=True),
-                    self._seven(follower_right.velocity, "right qvel", allow_padding=True),
+                    follower_left["velocity"],
+                    follower_right["velocity"],
                 )
             ),
             "effort": np.concatenate(
                 (
-                    self._seven(follower_left.effort, "left effort", allow_padding=True),
-                    self._seven(follower_right.effort, "right effort", allow_padding=True),
+                    follower_left["effort"],
+                    follower_right["effort"],
                 )
             ),
             "eef_pose": np.concatenate(
                 (
-                    self._eef(messages["follower_eef_left"], follower_left),
-                    self._eef(messages["follower_eef_right"], follower_right),
+                    self._eef(messages["follower_eef_left"], follower_left["position"]),
+                    self._eef(messages["follower_eef_right"], follower_right["position"]),
                 )
             ),
         }
@@ -219,7 +216,7 @@ class Collector(Node):
                 self.camera_names[1]: self._image(messages["depth_left"], depth=True),
                 self.camera_names[2]: self._image(messages["depth_right"], depth=True),
             }
-        return observation, np.concatenate((action_left, action_right))
+        return observation, np.concatenate((action_left, action_right)), frame_ns, source_ns
 
     def warn_throttled(self, message):
         now = time.monotonic()
@@ -228,8 +225,8 @@ class Collector(Node):
             self._last_warning = (message, now)
 
     def record(self, keyboard):
-        buffer = EpisodeBuffer(self.camera_names, self.use_depth)
-        pending_observation = None
+        topic_map = {name: str(self.get_parameter("topics." + name).value) for name in self.queues}
+        buffer = EpisodeBuffer(self.camera_names, self.use_depth, self.frame_rate, topic_map)
         interval = 1.0 / self.frame_rate
         next_frame = time.monotonic()
         print("Recording: SPACE stops the episode")
@@ -246,11 +243,9 @@ class Collector(Node):
                 if sample is None:
                     self.warn_throttled("waiting for synchronized streams")
                     continue
-                observation, action = sample
-                if pending_observation is not None:
-                    buffer.append(pending_observation, action)
-                    print(f"\rframes: {len(buffer)}", end="", flush=True)
-                pending_observation = observation
+                observation, action, frame_ns, source_ns = sample
+                buffer.append(observation, action, frame_ns=frame_ns, source_ns=source_ns)
+                print(f"\rframes: {len(buffer)}", end="", flush=True)
             except (KeyError, ValueError) as error:
                 self.warn_throttled(f"sample skipped: {error}")
         return buffer

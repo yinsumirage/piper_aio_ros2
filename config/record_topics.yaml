@@ -1,0 +1,56 @@
+streams:
+  rgb_front:
+    topic: /camera_f/color/image_raw
+    type: sensor_msgs/msg/Image
+    kind: rgb
+    camera: cam_high
+  rgb_left:
+    topic: /camera_l/color/image_raw
+    type: sensor_msgs/msg/Image
+    kind: rgb
+    camera: cam_left_wrist
+  rgb_right:
+    topic: /camera_r/color/image_raw
+    type: sensor_msgs/msg/Image
+    kind: rgb
+    camera: cam_right_wrist
+  follower_joint_left:
+    topic: /follower_left/joint_states_feedback
+    type: sensor_msgs/msg/JointState
+    kind: state
+    side: left
+  follower_joint_right:
+    topic: /follower_right/joint_states_feedback
+    type: sensor_msgs/msg/JointState
+    kind: state
+    side: right
+  leader_action_left:
+    topic: /master_left/joint_states
+    type: sensor_msgs/msg/JointState
+    kind: intent
+    side: left
+  leader_action_right:
+    topic: /master_right/joint_states
+    type: sensor_msgs/msg/JointState
+    kind: intent
+    side: right
+  follower_eef_left:
+    topic: /follower_left/end_pose_stamped
+    type: geometry_msgs/msg/PoseStamped
+    kind: eef
+    side: left
+  follower_eef_right:
+    topic: /follower_right/end_pose_stamped
+    type: geometry_msgs/msg/PoseStamped
+    kind: eef
+    side: right
+  executed_action_left:
+    topic: /follower_left/joint_ctrl_cmd
+    type: sensor_msgs/msg/JointState
+    kind: executed
+    side: left
+  executed_action_right:
+    topic: /follower_right/joint_ctrl_cmd
+    type: sensor_msgs/msg/JointState
+    kind: executed
+    side: right

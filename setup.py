@@ -26,6 +26,10 @@ setup(
         "console_scripts": [
             "collect = piper_aio_ros2.collect:main",
             "replay = piper_aio_ros2.replay:main",
+            "bag_preflight = piper_aio_ros2.bag_preflight:main",
+            "bag_inspect = piper_aio_ros2.bag_inspect:main",
+            "bag_to_hdf5 = piper_aio_ros2.bag_to_hdf5:main",
+            "validate_episode = piper_aio_ros2.validate_episode:main",
         ],
     },
 )
