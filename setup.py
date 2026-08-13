@@ -31,6 +31,9 @@ setup(
             "bag_inspect = piper_aio_ros2.bag_inspect:main",
             "bag_to_hdf5 = piper_aio_ros2.bag_to_hdf5:main",
             "validate_episode = piper_aio_ros2.validate_episode:main",
+            "realsense_inventory = piper_aio_ros2.cameras:inventory_main",
+            "assign_cameras = piper_aio_ros2.cameras:assign_main",
+            "camera_status = piper_aio_ros2.camera_status:main",
         ],
     },
 )

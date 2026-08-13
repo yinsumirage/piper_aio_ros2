@@ -19,6 +19,7 @@
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>piper</exec_depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>realsense2_camera</exec_depend>
   <exec_depend>rosbag2_py</exec_depend>
   <exec_depend>rosbag2_compression</exec_depend>
   <exec_depend>rosbag2_compression_zstd</exec_depend>

@@ -1,0 +1,8 @@
+# Confirmed by the user from serial-labelled previews on 2026-08-13.
+cameras:
+  - serial: "335622070696"
+    role: front
+  - serial: "349622073361"
+    role: left
+  - serial: "335622072178"
+    role: right
