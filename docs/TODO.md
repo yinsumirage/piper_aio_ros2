@@ -10,7 +10,7 @@
 |---|---|---|
 | 四路 CAN 稳定绑定 | 旧映射已验证，语义修正待部署 | 四路曾为 1 Mbps、UP 并有真实流；用户运动证明 follower `l/r` 物理反向，仓库 serial 规则已修正，待安装/重启复核 |
 | 四臂 ROS 2 编排 | 真机角色错误已定位 | 四路反馈约 200 Hz；仓库已撤销 ROS 临时补偿并恢复 left→`can_slave_l`、right→`can_slave_r`，待新系统映射生效后回归 |
-| 真机主从遥操作 | 初版流程已由用户完成 | arm、左右单侧和双侧可运行且动作基本符合；发现 follower 左右反接与 10% 过慢，新的 10% 渐进绝对对齐/30% 同步版本尚未真机回归 |
+| 真机主从遥操作 | 初版流程已由用户完成 | arm、左右单侧和双侧可运行且动作基本符合；发现 follower 左右反接与 10% 过慢，新的 10% 渐进绝对对齐/100 Hz/80% 同步版本尚未真机回归 |
 | RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
 | bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 36 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
 | 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
@@ -67,7 +67,7 @@ publisher 失败，不因官方反馈 topic 误报。
   `/follower_*/enable_srv`，从臂硬件使能保持独立、显式操作。
 - [x] command 发布前同时满足：左右 master 新鲜、左右 follower feedback 新鲜、消息 finite、
   关节名称完整且输入不越界。显式 arm 后第一条 command 保持 follower 当前姿态，随后以 10%
-  和有界单步从最新反馈渐进追到 live master；双侧都到位后才整体切到 30% 绝对同步。
+  和有界单步从最新反馈渐进追到 live master；双侧都到位后才整体切到 100 Hz/80% 绝对同步。
 - [x] 加入保守且可配置的关节限位、单步最大变化、夹爪范围、发布频率和输入超时。超时或异常后
   停止发布并锁存 fault，必须人工重新 arming。
 - [x] 让录包中的 `executed_action_*` 精确记录 bridge 实际发布的 7 维 command。这里的
@@ -115,7 +115,7 @@ publisher 失败，不因官方反馈 topic 误报。
 - [ ] 回归渐进绝对对齐：主从不必人工预先对齐，未使能 arm 后第一条 command 应等于各侧 follower
   当前反馈，后续目标相对最新反馈不超过配置单步；硬件 enable 后 arm 会让从臂以 10% 逐渐追到
   保持稳定的 master 绝对姿态，不执行机械零位回零。
-- [ ] 以默认 30% 重新做左、右、双侧短时运动，记录 command/state 的方向、延迟、跟踪误差、
+- [ ] 以默认 100 Hz/80% 重新做左、右、双侧短时运动，记录 command/state 的方向、延迟、跟踪误差、
   停止行为和 `/actions/executed` 语义；若需继续提高速度，按一次一级的小步重新验收。
 - [ ] 单独验证真实 stale/fault：fault 后 bridge 停发，但仍需人工 disable follower；验证前不得
   把 Ctrl+C 当作硬件 disable。
@@ -123,7 +123,7 @@ publisher 失败，不因官方反馈 topic 误报。
 验收：默认启动不运动；任何缺流、stale、越界或解除 arming 都不再产生 command；单侧和双侧
 方向、单位、夹爪、速度均经人工观察与记录确认。
 
-### 下一次：回归 follower 左右、渐进绝对对齐与 30% 同步
+### 下一次：回归 follower 左右、渐进绝对对齐与 100 Hz/80% 同步
 
 - [ ] 重新 `colcon build --symlink-install` 并 source overlay；不要继续使用已删除的
   `/tmp/teleop_first_motion.yaml`，直接启动默认 `teleop.launch.py`。
@@ -136,7 +136,7 @@ publisher 失败，不因官方反馈 topic 误报。
 - [ ] 把两条 master 保持在安全且稳定的目标姿态；再依次仅 enable 左、仅 enable 右检查物理角色和
   渐进方向。单侧 enable 时另一侧不会到位，因此不应期待全局对齐完成。
 - [ ] 两侧渐进方向均通过后才同时 enable 两侧并 arm；观察 10% 缓慢对齐和
-  `dual-arm gradual absolute alignment complete` 日志，再从小幅单关节开始确认 30% 同步，并按
+  `dual-arm gradual absolute alignment complete` 日志，再从小幅单关节开始确认 100 Hz/80% 同步，并按
   disarm→disable 顺序结束。
 - [ ] 保存 command/follower state 的短时 bag 或文本统计，至少记录跟踪方向、峰值误差、主观延迟、
   fault/停止行为；结束后检查无残留进程。
@@ -181,5 +181,5 @@ publisher 失败，不因官方反馈 topic 误报。
 - 至少一个真实 11-topic episode 完成全链路转换、QC、LeRobot v3 回读和视频人工抽查。
 - 文档明确保留“commanded action 不等于电机 ACK”和“硬件 replay 尚未验证”的证据边界。
 
-下一项 teleop 工作是部署 follower 稳定名修正，并回归渐进绝对对齐和 30% 同步；不做四臂自动
+下一项 teleop 工作是部署 follower 稳定名修正，并回归渐进绝对对齐和 100 Hz/80% 同步；不做四臂自动
 机械回零。相机 serial 绑定必须等待三台设备实际接入后再填写，不能预造编号。

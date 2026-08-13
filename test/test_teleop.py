@@ -69,9 +69,13 @@ class TeleopMappingTest(unittest.TestCase):
 
         teleop = (root / "config" / "teleop.yaml").read_text(encoding="utf-8")
         self.assertNotIn("alignment_mode:", teleop)
+        self.assertIn("publish_hz: 100.0", teleop)
         self.assertIn("alignment_speed_percent: 10.0", teleop)
         self.assertIn("alignment_joint_step_rad: 0.01", teleop)
-        self.assertIn("speed_percent: 30.0", teleop)
+        self.assertIn("speed_percent: 80.0", teleop)
+
+        launch = (root / "launch" / "four_arm.launch.py").read_text(encoding="utf-8")
+        self.assertIn('arguments=["--ros-args", "--log-level", "warn"]', launch)
 
 
 class TeleopSafetyTest(unittest.TestCase):
@@ -146,8 +150,8 @@ class TeleopSafetyTest(unittest.TestCase):
         commands = safety.commands(0.05)
         self.assertEqual(commands["left"], master["left"] + (0.04,))
         self.assertEqual(commands["right"], master["right"] + (0.04,))
-        self.assertEqual(safety.command_speed_percent("left"), 30.0)
-        self.assertEqual(safety.command_speed_percent("right"), 30.0)
+        self.assertEqual(safety.command_speed_percent("left"), 80.0)
+        self.assertEqual(safety.command_speed_percent("right"), 80.0)
 
     def test_teleop_requires_nine_dimensional_master_input(self):
         safety = TeleopSafety()

@@ -30,6 +30,7 @@ def generate_launch_description():
                     namespace=f"follower_{side}",
                     name="piper_ctrl",
                     output="screen",
+                    arguments=["--ros-args", "--log-level", "warn"],
                     parameters=[config],
                     remappings=CONTROL_REMAPPINGS,
                 ),

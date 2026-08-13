@@ -19,6 +19,7 @@ def main():
         raise RuntimeError("set an isolated ROS_DOMAIN_ID before running this test")
     rclpy.init()
     bridge = TeleopNode()
+    assert bridge.safety.limits.publish_hz == 100.0
     probe = Node("synthetic_teleop_probe")
     executor = SingleThreadedExecutor()
     executor.add_node(bridge)
@@ -88,8 +89,15 @@ def main():
             executor.spin_once(timeout_sec=0.01)
         assert future.done() and future.result().success, future.result()
 
+        before_sync = dict(counts)
+        sync_started = time.monotonic()
         spin_for(0.5, publish=True)
-        assert counts["left"] > 0 and counts["right"] > 0, counts
+        sync_elapsed = time.monotonic() - sync_started
+        command_hz = {
+            side: (counts[side] - before_sync[side]) / sync_elapsed
+            for side in ("left", "right")
+        }
+        assert all(60.0 <= rate <= 140.0 for rate in command_hz.values()), command_hz
         for side, message in messages.items():
             assert tuple(message.name) == JOINT_ORDER
             assert len(message.position) == 7
@@ -97,7 +105,7 @@ def main():
                 abs(actual - expected) < 1e-12
                 for actual, expected in zip(message.position, expected_targets[side])
             )
-            assert message.velocity[6] == 30.0
+            assert message.velocity[6] == 80.0
             assert message.effort[6] == 0.5
             assert history[side][0] == ((0.0,) * 7, 10.0)
             assert any(speed == 10.0 for _, speed in history[side])
@@ -119,7 +127,7 @@ def main():
         assert bridge.safety.fault is None
         print(
             "PASS: unarmed=0, gradual absolute alignment=bounded 10%, "
-            "dual sync=30%, stale=stopped, disarm=cleared"
+            f"dual sync={command_hz}/80%, stale=stopped, disarm=cleared"
         )
     finally:
         executor.remove_node(probe)

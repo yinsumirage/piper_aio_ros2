@@ -44,7 +44,7 @@ def follower_values(names, values):
 
 @dataclass(frozen=True)
 class TeleopLimits:
-    publish_hz: float = 30.0
+    publish_hz: float = 100.0
     stale_timeout_sec: float = 0.2
     max_joint_abs_rad: float = 3.0
     max_gripper_abs_m: float = 0.07
@@ -55,7 +55,7 @@ class TeleopLimits:
     max_joint_step_rad: float = 0.05
     max_gripper_step_m: float = 0.005
     alignment_speed_percent: float = 10.0
-    speed_percent: float = 30.0
+    speed_percent: float = 80.0
     gripper_effort: float = 0.5
 
     def __post_init__(self):
