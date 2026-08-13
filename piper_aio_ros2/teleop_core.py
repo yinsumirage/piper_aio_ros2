@@ -47,16 +47,16 @@ class TeleopLimits:
     publish_hz: float = 100.0
     stale_timeout_sec: float = 0.2
     max_joint_abs_rad: float = 3.0
-    max_gripper_abs_m: float = 0.07
+    max_gripper_abs_m: float = 0.08
     max_alignment_joint_error_rad: float = 1.0
-    max_alignment_gripper_error_m: float = 0.07
-    alignment_joint_step_rad: float = 0.01
-    alignment_gripper_step_m: float = 0.001
-    max_joint_step_rad: float = 0.05
-    max_gripper_step_m: float = 0.005
-    alignment_speed_percent: float = 10.0
-    speed_percent: float = 80.0
-    gripper_effort: float = 0.5
+    max_alignment_gripper_error_m: float = 0.08
+    alignment_joint_tolerance_rad: float = 0.02
+    alignment_gripper_tolerance_m: float = 0.002
+    max_joint_step_rad: float = 0.1
+    max_gripper_step_m: float = 0.01
+    alignment_speed_percent: float = 100.0
+    speed_percent: float = 100.0
+    gripper_effort: float = 1.0
 
     def __post_init__(self):
         positive = (
@@ -66,8 +66,8 @@ class TeleopLimits:
             self.max_gripper_abs_m,
             self.max_alignment_joint_error_rad,
             self.max_alignment_gripper_error_m,
-            self.alignment_joint_step_rad,
-            self.alignment_gripper_step_m,
+            self.alignment_joint_tolerance_rad,
+            self.alignment_gripper_tolerance_m,
             self.max_joint_step_rad,
             self.max_gripper_step_m,
         )
@@ -102,10 +102,6 @@ def command_payload(position, limits, speed_percent=None):
         "velocity": (0.0,) * 6 + (speed,),
         "effort": (0.0,) * 6 + (float(limits.gripper_effort),),
     }
-
-
-def _step_toward(current, target, maximum):
-    return current + max(-maximum, min(maximum, target - current))
 
 
 class TeleopSafety:
@@ -146,16 +142,24 @@ class TeleopSafety:
 
         key = (source, side)
         previous = self._samples.get(key)
-        if previous is not None:
+        if self.armed and previous is not None:
             if (previous.gripper is None) != (gripper is None):
                 return self._latch(f"{source}_{side}: input schema changed")
-            if any(
-                abs(current - old) > self.limits.max_joint_step_rad
-                for current, old in zip(joints, previous.joints)
-            ):
-                return self._latch(f"{source}_{side}: joint step safety limit exceeded")
+            joint_steps = tuple(
+                abs(current - old) for current, old in zip(joints, previous.joints)
+            )
+            if max(joint_steps) > self.limits.max_joint_step_rad:
+                index = joint_steps.index(max(joint_steps))
+                return self._latch(
+                    f"{source}_{side}: joint{index + 1} step {joint_steps[index]:.6g} rad "
+                    f"exceeded {self.limits.max_joint_step_rad:.6g} rad"
+                )
             if gripper is not None and abs(gripper - previous.gripper) > self.limits.max_gripper_step_m:
-                return self._latch(f"{source}_{side}: gripper step safety limit exceeded")
+                step = abs(gripper - previous.gripper)
+                return self._latch(
+                    f"{source}_{side}: gripper step {step:.6g} m exceeded "
+                    f"{self.limits.max_gripper_step_m:.6g} m"
+                )
         self._samples[key] = _Sample(tuple(joints), gripper, float(now))
         return True
 
@@ -225,7 +229,7 @@ class TeleopSafety:
         self._aligning = True
         self._alignment_first = True
         self.armed = True
-        return True, "armed; gradual absolute alignment active"
+        return True, "armed; absolute alignment active"
 
     def commands(self, now):
         if not self.armed or self.fault is not None:
@@ -260,10 +264,10 @@ class TeleopSafety:
                     return None
         alignment_complete = self._aligning and not self._alignment_first and all(
             all(
-                abs(target - current) <= self.limits.alignment_joint_step_rad
+                abs(target - current) <= self.limits.alignment_joint_tolerance_rad
                 for current, target in zip(follower[:6], master[:6])
             )
-            and abs(master[6] - follower[6]) <= self.limits.alignment_gripper_step_m
+            and abs(master[6] - follower[6]) <= self.limits.alignment_gripper_tolerance_m
             for master, follower in samples.values()
         )
         for side in SIDES:
@@ -272,19 +276,8 @@ class TeleopSafety:
                 speeds[side] = self.limits.alignment_speed_percent
                 if self._alignment_first:
                     position = follower_position
-                elif alignment_complete:
-                    position = master_position
                 else:
-                    position = tuple(
-                        _step_toward(current, target, self.limits.alignment_joint_step_rad)
-                        for current, target in zip(follower_position[:6], master_position[:6])
-                    ) + (
-                        _step_toward(
-                            follower_position[6],
-                            master_position[6],
-                            self.limits.alignment_gripper_step_m,
-                        ),
-                    )
+                    position = master_position
             else:
                 speeds[side] = self.limits.speed_percent
                 position = master_position

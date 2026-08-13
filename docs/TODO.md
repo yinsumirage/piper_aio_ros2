@@ -10,9 +10,9 @@
 |---|---|---|
 | 四路 CAN 稳定绑定 | 语义修正已部署 | 重启后四路目标 serial、稳定接口名、1 Mbps、UP 检查通过；业务角色仍以逐侧运动回归为准 |
 | 四臂 ROS 2 编排 | 映射已修正，待定量回归 | ROS 已恢复 left→`can_slave_l`、right→`can_slave_r`；四路节点和反馈可启动，仍需保存逐侧角色证据 |
-| 真机主从遥操作 | 初版流程已由用户完成 | arm、左右单侧和双侧可运行且动作基本符合；发现 follower 左右反接与 10% 过慢，新的 10% 渐进绝对对齐/100 Hz/80% 同步版本尚未真机回归 |
+| 真机主从遥操作 | 初版流程已由用户完成 | arm、左右单侧和双侧可运行；旧版 alignment 未 complete 并被 70 mm 夹爪门限中止，新的快速绝对对齐/100 Hz/100% 版本尚未真机回归 |
 | RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
-| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 38 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
+| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 39 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
 | 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
 | 硬件 replay | **未实现，刻意禁用** | 当前 replay 只读 shape；`--execute` 明确拒绝，不创建 publisher |
 
@@ -66,13 +66,13 @@ publisher 失败，不因官方反馈 topic 误报。
 - [x] 默认 `armed=false`，未显式 arming 时不发布任何 command；bridge 永不自动调用
   `/follower_*/enable_srv`，从臂硬件使能保持独立、显式操作。
 - [x] command 发布前同时满足：左右 master 新鲜、左右 follower feedback 新鲜、消息 finite、
-  关节名称完整且输入不越界。显式 arm 后第一条 command 保持 follower 当前姿态，随后以 10%
-  和有界单步从最新反馈渐进追到 live master；双侧都到位后才整体切到 100 Hz/80% 绝对同步。
+  关节名称完整且输入不越界。显式 arm 后第一条 command 保持 follower 当前姿态，随后把 live master
+  完整绝对目标交给官方控制器以 100% 追踪；双侧反馈都进入配置容差后才整体退出 alignment。
 - [x] 加入保守且可配置的关节限位、单步最大变化、夹爪范围、发布频率和输入超时。超时或异常后
   停止发布并锁存 fault，必须人工重新 arming。
 - [x] 让录包中的 `executed_action_*` 精确记录 bridge 实际发布的 7 维 command。这里的
   `executed` 仍表示“已发给驱动的 commanded action”，不是电机 ACK；物理跟踪看 follower state。
-- [x] 纯函数测试覆盖：乱序 9D 映射、夹爪、左右隔离、首帧无跳变、渐进绝对对齐、双侧原子切换、
+- [x] 纯函数测试覆盖：乱序 9D 映射、夹爪、左右隔离、首帧无跳变、直接绝对对齐、双侧原子切换、
   command 限位、单步限制、stale 和 unarmed 零发布；再用隔离 ROS domain 做无硬件 topic/rate
   测试。
 
@@ -113,12 +113,12 @@ publisher 失败，不因官方反馈 topic 误报。
   `can_slave_l`、物理右 serial 映射 `can_slave_r`，四路均为 1 Mbps、UP/ERROR-ACTIVE。
 - [ ] 回归无 ROS 补偿的语义映射：`/follower_left` 使用 `can_slave_l`，`/follower_right` 使用
   `can_slave_r`；逐侧确认 master left/right 不再串到另一只物理 follower。
-- [ ] 回归渐进绝对对齐：主从不必人工预先对齐，未使能 arm 后第一条 command 应等于各侧 follower
-  当前反馈，后续目标相对最新反馈不超过配置单步；硬件 enable 后 arm 会让从臂以 10% 逐渐追到
-  保持稳定的 master 绝对姿态，不执行机械零位回零。
+- [ ] 回归快速绝对对齐：主从不必人工预先对齐，未使能 arm 后第一条 command 应等于各侧 follower
+  当前反馈，后续 command 直接等于保持稳定的 master 绝对姿态；硬件 enable 后由官方控制器以 100%
+  追踪，不执行机械零位回零。此处会真实快速运动，必须清空工作区并保持急停可触达。
 - [ ] 回归左右夹爪完整张合：确认 master 原始正负号都归一化为非负开度，闭合至完全张开的
-  `0.07 m` 配置范围可渐进跟随，不再触发虚假的双倍距离 fault；记录实际最大开度后再标定门限。
-- [ ] 以默认 100 Hz/80% 重新做左、右、双侧短时运动，记录 command/state 的方向、延迟、跟踪误差、
+  `0.08 m` 配置范围可跟随，不再触发 70 mm 误停；记录实际最大开度后再标定门限。
+- [ ] 以默认 100 Hz/100% 重新做左、右、双侧短时运动，记录 command/state 的方向、延迟、跟踪误差、
   停止行为和 `/actions/executed` 语义；若需继续提高速度，按一次一级的小步重新验收。
 - [ ] 单独验证真实 stale/fault：fault 后 bridge 停发，但仍需人工 disable follower；验证前不得
   把 Ctrl+C 当作硬件 disable。
@@ -126,20 +126,20 @@ publisher 失败，不因官方反馈 topic 误报。
 验收：默认启动不运动；任何缺流、stale、越界或解除 arming 都不再产生 command；单侧和双侧
 方向、单位、夹爪、速度均经人工观察与记录确认。
 
-### 下一次：回归 follower 左右、渐进绝对对齐与 100 Hz/80% 同步
+### 下一次：回归 follower 左右、快速绝对对齐与 100 Hz/100% 同步
 
 - [ ] 重新 `colcon build --symlink-install` 并 source overlay；不要继续使用已删除的
   `/tmp/teleop_first_motion.yaml`，直接启动默认 `teleop.launch.py`。
 - [ ] 现场清空、急停可触达；确认没有旧 ROS/control 进程，四路 CAN 正常，且 follower 参数为
   left→`can_slave_l`、right→`can_slave_r`，两路 `auto_enable=false`。
 - [ ] follower 不 enable，启动 teleop 并确认 unarmed 零 command；无需人工让四臂绝对对齐。
-- [ ] 仅软件 arm，核对响应为 `armed; gradual absolute alignment active`、两路第一条 7D command
-  分别等于当前 follower feedback、后续 command 与静止 feedback 相差不超过配置单步、
-  `velocity[6]=10`、`effort[6]=0.5`，随后 disarm。
+- [ ] 仅软件 arm，核对响应为 `armed; absolute alignment active`、两路第一条 7D command
+  分别等于当前 follower feedback、后续 command 等于 master 绝对目标、
+  `velocity[6]=100`、`effort[6]=1.0`，随后 disarm。
 - [ ] 把两条 master 保持在安全且稳定的目标姿态；再依次仅 enable 左、仅 enable 右检查物理角色和
-  渐进方向。单侧 enable 时另一侧不会到位，因此不应期待全局对齐完成。
-- [ ] 两侧渐进方向均通过后才同时 enable 两侧并 arm；观察 10% 缓慢对齐和
-  `dual-arm gradual absolute alignment complete` 日志，再从小幅单关节开始确认 100 Hz/80% 同步，并按
+  对齐方向。单侧 enable 时另一侧不会到位，因此不应期待全局对齐完成。
+- [ ] 两侧方向均通过后才同时 enable 两侧并 arm；观察快速绝对对齐和
+  `dual-arm absolute alignment complete` 日志，再从小幅单关节开始确认 100 Hz/100% 同步，并按
   disarm→disable 顺序结束。
 - [ ] 保存 command/follower state 的短时 bag 或文本统计，至少记录跟踪方向、峰值误差、主观延迟、
   fault/停止行为；结束后检查无残留进程。
@@ -173,7 +173,7 @@ publisher 失败，不因官方反馈 topic 误报。
 
 - [ ] 在真实数据合同稳定前继续保持硬件 replay 禁用。
 - [ ] 先实现纯离线时间轴检查和可视化，再实现隔离 ROS domain 的 command replay。
-- [ ] 若以后增加真机 `--execute`，必须复用 teleop 的 arming、渐进绝对对齐、限位、单步限制、stale、
+- [ ] 若以后增加真机 `--execute`，必须复用 teleop 的 arming、绝对对齐、限位、单步限制、stale、
   显式 enable/disable 和单侧验收门禁；禁止从当前 dry-run 直接跳到双臂执行。
 
 ## v1 完成定义
@@ -184,5 +184,5 @@ publisher 失败，不因官方反馈 topic 误报。
 - 至少一个真实 11-topic episode 完成全链路转换、QC、LeRobot v3 回读和视频人工抽查。
 - 文档明确保留“commanded action 不等于电机 ACK”和“硬件 replay 尚未验证”的证据边界。
 
-下一项 teleop 工作是部署 follower 稳定名修正，并回归渐进绝对对齐和 100 Hz/80% 同步；不做四臂自动
+下一项 teleop 工作是回归 follower 稳定名、快速绝对对齐和 100 Hz/100% 同步；不做四臂自动
 机械回零。相机 serial 绑定必须等待三台设备实际接入后再填写，不能预造编号。

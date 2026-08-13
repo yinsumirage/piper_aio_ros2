@@ -145,4 +145,6 @@ teleop 另在隔离 ROS domain 中验证了默认 unarmed 零 command、显式 a
 7D command、输入 stale 后停止；真实四路输入窗口也验证了 unarmed 时 4.02 秒左右均为零
 command。两路真实 master 已确认严格 9D name、占位 `gripper=0` 及 `joint7/joint8` 成对相反；
 后续真机运动暴露左右原始差值符号不一致，因此 canonical position 已统一为开度幅值。这些仍不是
-硬件 ACK、夹爪完整行程标定或修复后的真实四臂运动验证。
+硬件 ACK、夹爪完整行程标定或修复后的真实四臂运动验证。最新 bridge 采用官方控制代码中的
+80 mm 上限，首帧保持 follower 后发送完整 master 绝对目标；`velocity[6]=100` 只控制六个臂关节，
+`gripper_effort=1.0` 是夹爪力矩而非速度。该快速对齐版本仍需真机回归。

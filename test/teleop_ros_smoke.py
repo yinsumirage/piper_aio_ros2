@@ -105,10 +105,9 @@ def main():
                 abs(actual - expected) < 1e-12
                 for actual, expected in zip(message.position, expected_targets[side])
             )
-            assert message.velocity[6] == 80.0
-            assert message.effort[6] == 0.5
-            assert history[side][0] == ((0.0,) * 7, 10.0)
-            assert any(speed == 10.0 for _, speed in history[side])
+            assert message.velocity[6] == 100.0
+            assert message.effort[6] == 1.0
+            assert history[side][0] == ((0.0,) * 7, 100.0)
         assert not bridge.safety.aligning
 
         spin_for(0.35)
@@ -126,8 +125,8 @@ def main():
         assert future.done() and future.result().success
         assert bridge.safety.fault is None
         print(
-            "PASS: unarmed=0, gradual absolute alignment=bounded 10%, "
-            f"dual sync={command_hz}/80%, stale=stopped, disarm=cleared"
+            "PASS: unarmed=0, first command holds feedback, "
+            f"dual absolute sync={command_hz}/100%, stale=stopped, disarm=cleared"
         )
     finally:
         executor.remove_node(probe)

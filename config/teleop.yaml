@@ -4,19 +4,20 @@
     publish_hz: 100.0
     stale_timeout_sec: 0.2
     max_joint_abs_rad: 3.0
-    max_gripper_abs_m: 0.07
-    # Explicit arm starts from feedback and slews toward the live master pose.
+    max_gripper_abs_m: 0.08
+    # Explicit arm holds feedback once, then sends the live master pose.
     # These gates bound the automatic joint-space alignment path.
     max_alignment_joint_error_rad: 1.0
-    # Full configured opening mismatch is allowed to converge gradually.
-    max_alignment_gripper_error_m: 0.07
-    alignment_joint_step_rad: 0.01
-    alignment_gripper_step_m: 0.001
-    max_joint_step_rad: 0.05
-    max_gripper_step_m: 0.005
-    alignment_speed_percent: 10.0
-    speed_percent: 80.0
-    gripper_effort: 0.5
+    # Full official 80 mm opening mismatch is allowed to align.
+    max_alignment_gripper_error_m: 0.08
+    alignment_joint_tolerance_rad: 0.02
+    alignment_gripper_tolerance_m: 0.002
+    max_joint_step_rad: 0.1
+    max_gripper_step_m: 0.01
+    alignment_speed_percent: 100.0
+    speed_percent: 100.0
+    # This is torque, not a gripper speed percentage.
+    gripper_effort: 1.0
     topics.master_left: /master_left/joint_states
     topics.master_right: /master_right/joint_states
     topics.follower_left: /follower_left/joint_states_feedback

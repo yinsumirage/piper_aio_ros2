@@ -9,7 +9,8 @@
 截至 2026-08-13，四路稳定 CAN 接口、真实反馈和初版双臂 teleop 已完成分阶段现场运行；用户
 报告跟随基本正常，同时发现 follower 已部署左右标签反向和 10% 速度过慢。仓库现已按物理左右
 交换 follower serial→稳定名并撤销 ROS 层临时补偿；系统规则已安装并在重启后通过四路状态检查。
-默认 teleop 已改为 10% 渐进绝对对齐、对齐后 100 Hz/80% 同步，这些新改动尚待真机回归。
+最新 teleop 在首帧保持 follower 后直接发送 master 绝对目标，由官方控制器以 100% 速度追踪；
+对齐后继续 100 Hz/100% 同步。该修复已通过离线/隔离 ROS 测试，尚待重新启动节点后真机回归。
 相机、EEF 语义和完整 episode 尚未验证。可审计边界见
 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
@@ -178,22 +179,23 @@ topic，不做多余 remap。namespace 保证四臂 topic/service 不冲突。te
 `config/topics.yaml` 仅把采集器的 arm
 输入改到上述 namespaced feedback，相机 topic 未改。
 
-## 安全双臂 teleop（初版已真机运行，当前渐进绝对对齐待复测）
+## 安全双臂 teleop（初版已真机运行，当前快速绝对对齐待复测）
 
 `teleop.launch.py` 单独启动 `/dual_arm_teleop`。节点默认且固定从 unarmed 开始，不调用
 `/follower_*/enable_srv`，也不修改 `auto_enable: false`。两侧共同 arming：缺任一 master 或
 follower、输入不新鲜、名称/维度/finite 检查失败或任一输入越界时，整体拒绝。
 
 显式 arm 后使用绝对姿态，不保留 relative 偏置，也不会让四条臂自动回机械零位。第一条 command
-严格等于各自 follower 的最新反馈；随后每个发布周期都从最新 follower 反馈向实时 master 目标最多
-移动 `alignment_joint_step_rad` 和 `alignment_gripper_step_m`，并显式使用
-`alignment_speed_percent: 10`。操作者必须在此阶段保持两条 master 稳定。只有左右两侧都到达目标，
-bridge 才整体切换为 100 Hz、80% 的直接绝对同步，避免半套系统提前进入正常跟随。
+严格等于各自 follower 的最新反馈；随后直接发送两条 master 的实时绝对目标，由官方 follower
+控制器按 `alignment_speed_percent: 100` 执行。操作者必须在此阶段保持两条 master 稳定。只有左右
+两侧反馈都进入 `alignment_joint_tolerance_rad` / `alignment_gripper_tolerance_m`，bridge 才整体退出
+alignment 并报告 complete，避免半套系统提前进入正常跟随。
 
 arm 前以及对齐过程中，任一侧主从关节或夹爪距离超过
 `max_alignment_joint_error_rad` / `max_alignment_gripper_error_m` 都会拒绝或锁存 fault。默认
-`1.0 rad`、`0.07 m` 只是待真机标定的软件安全门限，不是自动规划能力或 Piper 物理极限。默认
-夹爪对齐距离覆盖当前配置的完整开度范围；对齐仍按每周期 `0.001 m`、10% 逐步进行。
+`1.0 rad`、`0.08 m` 只是待真机标定的软件安全门限，不是自动规划能力或 Piper 物理极限。80 mm
+来自官方 follower 控制代码采用的上限；本机完整行程仍需保存实测。此前 70 mm 门限已被真实 master
+开度超过并造成误停，因此不再使用。
 
 官方 reader 源码在 `gripper_exist: true` 时构造 9D
 `joint1..joint6,gripper,joint7,joint8`；其中 `gripper` 为占位，bridge 用
@@ -205,15 +207,17 @@ position 统一为非负开度幅值。
 这只确认当前消息输入，夹爪物理方向、零点、单位与完整行程仍待现场扰动标定。映射器能严格
 解析 6D reader 输出用于兼容诊断，但 teleop arming 必须有 9D 夹爪输入，绝不会给第 7 维补零。
 
-command 显式填写 `velocity[6]` 和 `effort[6]=gripper_effort`：渐进对齐阶段为 10%，对齐完成后的
-正常同步为 100 Hz/80%，且不触发官方节点的 100% 速度回退。官方 follower feedback 和 master
-reader 线程均为 200 Hz；bridge 的 100 Hz 是 command timer，不是电机 ACK 频率。任一侧 stale、
+command 显式填写 `velocity[6]` 和 `effort[6]=gripper_effort`：对齐及正常同步均为 100 Hz/100%。
+`velocity[6]` 只被官方节点用于六个臂关节的 `MotionCtrl_2`；官方 `GripperCtrl` 没有速度百分比参数，
+只有目标开度和力矩。默认 `gripper_effort: 1.0` 是力矩，不是“夹爪 100% 速度”；快速夹爪跟随通过
+直接发送完整开度目标实现。官方 follower feedback 和 master reader 线程均为 200 Hz；bridge 的
+100 Hz 是 command timer，不是电机 ACK 频率。任一侧 stale、
 非有限、绝对值越界、schema
 改变或单步跳变会停止后续双侧发布并
 锁存 fault；必须显式 disarm（同时清空旧输入）后，重新收到四路新鲜数据才能再次 arm。
 `config/teleop.yaml` 的默认阈值只是保守的软件门禁，不是 Piper 物理极限，必须在真机阶段标定。
 
-以下是真机分阶段操作顺序。初版绝对映射已由用户完成全流程；当前渐进对齐/100 Hz/80%/左右修正版本
+以下是真机分阶段操作顺序。初版绝对映射已由用户完成全流程；当前快速对齐/100 Hz/100%/左右修正版本
 仍应从未使能检查重新逐级验证：
 
 ```bash
@@ -223,7 +227,7 @@ ros2 launch piper_aio_ros2 four_arm.launch.py
 # 2. 另一个终端单独启动 bridge；此时不会发布 command
 ros2 launch piper_aio_ros2 teleop.launch.py
 
-# 3. 四路输入新鲜、主臂保持不动后显式 arm；硬件已 enable 时从臂会立即开始 10% 渐进对齐
+# 3. 四路输入新鲜、主臂保持不动后显式 arm；硬件已 enable 时从臂会立即快速对齐
 ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: true}"
 
 # 4. 正常停止或 fault 后都先显式 disarm
@@ -232,10 +236,10 @@ ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: false}"
 
 硬件 enable/disable 是上述 bridge arming 之外的独立人工操作，bridge 永不代办。第一次真机验收
 必须逐阶段重新授权：清空从臂工作区并保证急停可触达；硬件未使能时先核对四路 name/单位/夹爪
-和 unarmed 零 command；仍未使能时短暂 arm 检查第一条 command 等于 follower 当前反馈、后续目标
-相对最新反馈不超过单步门限、两路 7D command、10% 速度字段和夹爪 effort，随即 disarm。硬件
-enable 后再次 arm 就会开始真实对齐运动，应让 master 保持稳定；日志报告双侧对齐完成后才允许
-做 80% 小幅跟随。任何左右串线、方向/单位错误、未 arm 出现 command、超阈值、跟踪突变、stale
+和 unarmed 零 command；仍未使能时短暂 arm 检查第一条 command 等于 follower 当前反馈、后续两路
+7D command 等于 master 绝对目标、100% 速度字段和夹爪 effort，随即 disarm。硬件 enable 后再次
+arm 就会开始真实快速对齐运动，应让 master 保持稳定；日志报告双侧对齐完成后才允许做小幅跟随。
+任何左右串线、方向/单位错误、未 arm 出现 command、超阈值、跟踪突变、stale
 未停发、disarm 失败或异常 enable 都立即停止，disarm bridge 并由人工独立 disable 硬件。
 
 ## RealSense 当前边界
@@ -319,8 +323,8 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
   13 个查询 TX，停止后 TX 不再增长；没有 enable 或运动机械臂。
 - 初版绝对映射 teleop 的纯逻辑、隔离 ROS、真实 unarmed 零 command 已验证；用户随后现场完成
   arm、左右单侧及双侧 enable/运动流程并报告动作方向符合，但同时发现两路 follower 物理角色
-  反接、10% 跟随过慢。仓库的 serial 语义修正、ROS 补偿撤销、10% 渐进绝对对齐和对齐后
-  100 Hz/80% 同步已经代码化；系统映射重启生效后仍需再次真机回归。这不是长时间稳定性或完整
+  反接、10% 跟随过慢。仓库的 serial 语义修正、ROS 补偿撤销、快速绝对对齐和
+  100 Hz/100% 同步已经代码化；系统映射重启生效后仍需再次真机回归。这不是长时间稳定性或完整
   物理安全认证。
 - 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改
   相机启动逻辑。

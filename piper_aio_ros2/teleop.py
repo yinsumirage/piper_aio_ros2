@@ -22,8 +22,8 @@ class TeleopNode(Node):
             ("max_gripper_abs_m", defaults.max_gripper_abs_m),
             ("max_alignment_joint_error_rad", defaults.max_alignment_joint_error_rad),
             ("max_alignment_gripper_error_m", defaults.max_alignment_gripper_error_m),
-            ("alignment_joint_step_rad", defaults.alignment_joint_step_rad),
-            ("alignment_gripper_step_m", defaults.alignment_gripper_step_m),
+            ("alignment_joint_tolerance_rad", defaults.alignment_joint_tolerance_rad),
+            ("alignment_gripper_tolerance_m", defaults.alignment_gripper_tolerance_m),
             ("max_joint_step_rad", defaults.max_joint_step_rad),
             ("max_gripper_step_m", defaults.max_gripper_step_m),
             ("alignment_speed_percent", defaults.alignment_speed_percent),
@@ -103,7 +103,7 @@ class TeleopNode(Node):
         if commands is None:
             return
         if self.safety.fault is None and aligning_before and not self.safety.aligning:
-            self.get_logger().info("dual-arm gradual absolute alignment complete")
+            self.get_logger().info("dual-arm absolute alignment complete")
         stamp = self.get_clock().now().to_msg()
         messages = {}
         for side in SIDES:
