@@ -9,8 +9,9 @@
 截至 2026-08-13，四路稳定 CAN 接口、真实反馈和初版双臂 teleop 已完成分阶段现场运行；用户
 报告跟随基本正常，同时发现 follower 已部署左右标签反向和 10% 速度过慢。仓库现已按物理左右
 交换 follower serial→稳定名并撤销 ROS 层临时补偿；系统规则已安装并在重启后通过四路状态检查。
-最新 teleop 在首帧保持 follower 后直接发送 master 绝对目标，由官方控制器以 100% 速度追踪；
-对齐后继续 100 Hz/100% 同步。该修复已通过离线/隔离 ROS 测试，尚待重新启动节点后真机回归。
+最新 teleop 在 arm 时冻结 master 目标：首帧保持 follower，双侧稳定对齐后才进入
+100 Hz/100% live follow；另提供默认不 enable/arm 的 tmux 三窗格启动器。该版本已通过离线/隔离
+ROS 测试，尚待重新启动节点后真机回归。
 相机、EEF 语义和完整 episode 尚未验证。可审计边界见
 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
@@ -179,17 +180,22 @@ topic，不做多余 remap。namespace 保证四臂 topic/service 不冲突。te
 `config/topics.yaml` 仅把采集器的 arm
 输入改到上述 namespaced feedback，相机 topic 未改。
 
-## 安全双臂 teleop（初版已真机运行，当前快速绝对对齐待复测）
+## 安全双臂 teleop（初版已真机运行，当前两阶段对齐待复测）
 
 `teleop.launch.py` 单独启动 `/dual_arm_teleop`。节点默认且固定从 unarmed 开始，不调用
 `/follower_*/enable_srv`，也不修改 `auto_enable: false`。两侧共同 arming：缺任一 master 或
 follower、输入不新鲜、名称/维度/finite 检查失败或任一输入越界时，整体拒绝。
 
-显式 arm 后使用绝对姿态，不保留 relative 偏置，也不会让四条臂自动回机械零位。第一条 command
-严格等于各自 follower 的最新反馈；随后直接发送两条 master 的实时绝对目标，由官方 follower
-控制器按 `alignment_speed_percent: 100` 执行。操作者必须在此阶段保持两条 master 稳定。只有左右
-两侧反馈都进入 `alignment_joint_tolerance_rad` / `alignment_gripper_tolerance_m`，bridge 才整体退出
-alignment 并报告 complete，避免半套系统提前进入正常跟随。
+显式 arm 后使用严格的两阶段绝对姿态流程，不保留 relative 偏置，也不会让四条臂自动回机械零位。
+arm 瞬间冻结左右 master 目标；第一条 command 严格等于各自 follower 的最新反馈，随后只追冻结目标。
+alignment 期间两条 master 必须保持稳定，累计漂移超过配置门限会 fault。左右 follower 都进入
+`alignment_joint_tolerance_rad` / `alignment_gripper_tolerance_m` 并连续稳定
+`alignment_settle_sec` 后，bridge 才原子切换到实时 master follow，并报告
+`dual-arm alignment complete; live follow active`。
+
+alignment 每秒打印左右最大关节/夹爪剩余误差；超过 `alignment_timeout_sec` 仍未完成会 fault，并在
+错误中带出两侧残差，不再无限无声等待。默认 master 保持门限为 `0.05 rad` / `0.005 m`，settle 为
+`0.3 s`，timeout 为 `15 s`。这些仍是待真机标定的软件门限。
 
 arm 前以及对齐过程中，任一侧主从关节或夹爪距离超过
 `max_alignment_joint_error_rad` / `max_alignment_gripper_error_m` 都会拒绝或锁存 fault。默认
@@ -217,28 +223,47 @@ command 显式填写 `velocity[6]` 和 `effort[6]=gripper_effort`：对齐及正
 锁存 fault；必须显式 disarm（同时清空旧输入）后，重新收到四路新鲜数据才能再次 arm。
 `config/teleop.yaml` 的默认阈值只是保守的软件门禁，不是 Piper 物理极限，必须在真机阶段标定。
 
-以下是真机分阶段操作顺序。初版绝对映射已由用户完成全流程；当前快速对齐/100 Hz/100%/左右修正版本
-仍应从未使能检查重新逐级验证：
+推荐使用仓库自带的 tmux 会话，不必手工新建三个 SSH 终端：
 
 ```bash
-# 1. 先按获批流程启动驱动；auto_enable 仍为 false
+# 在仓库根目录执行；先检查四路 CAN，再创建 DRIVER / TELEOP / CONTROL 三个窗格
+./scripts/teleop_session.sh start
+```
+
+`start` 只启动 `four_arm.launch.py` 和默认 unarmed 的 `teleop.launch.py`，绝不 enable 或 arm。
+tmux 已开启鼠标，可以直接点击窗格切换。在 CONTROL 窗格按顺序执行：
+
+```bash
+./scripts/teleop_control.sh status
+./scripts/teleop_control.sh enable   # 显式硬件 enable，不会 arm
+./scripts/teleop_control.sh arm      # 开始真实冻结目标 alignment
+./scripts/teleop_control.sh stop     # 先 disarm，再 disable 两个 follower
+```
+
+按 `Ctrl-b` 后按 `d` 可退出 tmux 画面但保留进程；之后运行
+`./scripts/teleop_session.sh attach` 重新进入。鼠标滚轮可看历史日志；若不用鼠标，按 `Ctrl-b` 后按方向键
+切窗格。完整停止并关闭整个会话使用：
+
+```bash
+./scripts/teleop_session.sh stop
+```
+
+若检测到会话之外已经存在旧 launch 或残留 driver/teleop 子进程，`start` 会拒绝创建重复节点。传统的三个
+终端方式仍可使用：
+
+```bash
 ros2 launch piper_aio_ros2 four_arm.launch.py
-
-# 2. 另一个终端单独启动 bridge；此时不会发布 command
 ros2 launch piper_aio_ros2 teleop.launch.py
-
-# 3. 四路输入新鲜、主臂保持不动后显式 arm；硬件已 enable 时从臂会立即快速对齐
 ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: true}"
-
-# 4. 正常停止或 fault 后都先显式 disarm
 ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: false}"
 ```
 
 硬件 enable/disable 是上述 bridge arming 之外的独立人工操作，bridge 永不代办。第一次真机验收
 必须逐阶段重新授权：清空从臂工作区并保证急停可触达；硬件未使能时先核对四路 name/单位/夹爪
 和 unarmed 零 command；仍未使能时短暂 arm 检查第一条 command 等于 follower 当前反馈、后续两路
-7D command 等于 master 绝对目标、100% 速度字段和夹爪 effort，随即 disarm。硬件 enable 后再次
-arm 就会开始真实快速对齐运动，应让 master 保持稳定；日志报告双侧对齐完成后才允许做小幅跟随。
+7D command 等于 arm 时冻结的 master 目标、100% 速度字段和夹爪 effort，随即 disarm。硬件 enable
+后再次 arm 就会开始真实快速对齐运动，应让 master 保持稳定；日志明确报告 live follow active 后
+才允许移动 master 做小幅跟随。
 任何左右串线、方向/单位错误、未 arm 出现 command、超阈值、跟踪突变、stale
 未停发、disarm 失败或异常 enable 都立即停止，disarm bridge 并由人工独立 disable 硬件。
 
@@ -323,7 +348,7 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
   13 个查询 TX，停止后 TX 不再增长；没有 enable 或运动机械臂。
 - 初版绝对映射 teleop 的纯逻辑、隔离 ROS、真实 unarmed 零 command 已验证；用户随后现场完成
   arm、左右单侧及双侧 enable/运动流程并报告动作方向符合，但同时发现两路 follower 物理角色
-  反接、10% 跟随过慢。仓库的 serial 语义修正、ROS 补偿撤销、快速绝对对齐和
+  反接、10% 跟随过慢。仓库的 serial 语义修正、ROS 补偿撤销、冻结目标的两阶段对齐和
   100 Hz/100% 同步已经代码化；系统映射重启生效后仍需再次真机回归。这不是长时间稳定性或完整
   物理安全认证。
 - 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改

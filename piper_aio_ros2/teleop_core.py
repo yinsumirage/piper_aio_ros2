@@ -52,6 +52,10 @@ class TeleopLimits:
     max_alignment_gripper_error_m: float = 0.08
     alignment_joint_tolerance_rad: float = 0.02
     alignment_gripper_tolerance_m: float = 0.002
+    alignment_timeout_sec: float = 15.0
+    alignment_settle_sec: float = 0.3
+    max_alignment_master_joint_drift_rad: float = 0.05
+    max_alignment_master_gripper_drift_m: float = 0.005
     max_joint_step_rad: float = 0.1
     max_gripper_step_m: float = 0.01
     alignment_speed_percent: float = 100.0
@@ -68,6 +72,10 @@ class TeleopLimits:
             self.max_alignment_gripper_error_m,
             self.alignment_joint_tolerance_rad,
             self.alignment_gripper_tolerance_m,
+            self.alignment_timeout_sec,
+            self.alignment_settle_sec,
+            self.max_alignment_master_joint_drift_rad,
+            self.max_alignment_master_gripper_drift_m,
             self.max_joint_step_rad,
             self.max_gripper_step_m,
         )
@@ -114,6 +122,9 @@ class TeleopSafety:
         self._samples = {}
         self._aligning = False
         self._alignment_first = False
+        self._alignment_targets = {}
+        self._alignment_started_at = None
+        self._alignment_in_tolerance_since = None
         self._command_speeds = {side: self.limits.speed_percent for side in SIDES}
 
     def _latch(self, reason):
@@ -122,6 +133,9 @@ class TeleopSafety:
         self.armed = False
         self._aligning = False
         self._alignment_first = False
+        self._alignment_targets.clear()
+        self._alignment_started_at = None
+        self._alignment_in_tolerance_since = None
         self._command_speeds = {side: self.limits.speed_percent for side in SIDES}
         return False
 
@@ -185,6 +199,9 @@ class TeleopSafety:
         self._samples.clear()
         self._aligning = False
         self._alignment_first = False
+        self._alignment_targets.clear()
+        self._alignment_started_at = None
+        self._alignment_in_tolerance_since = None
         self._command_speeds = {side: self.limits.speed_percent for side in SIDES}
 
     @property
@@ -194,6 +211,19 @@ class TeleopSafety:
     def command_speed_percent(self, side):
         self._check_side(side)
         return self._command_speeds[side]
+
+    def alignment_status(self, now):
+        if not self._aligning:
+            return None
+        errors = {}
+        for side in SIDES:
+            follower = self._samples[("follower", side)]
+            target = self._alignment_targets[side]
+            errors[side] = (
+                max(abs(a - b) for a, b in zip(follower.joints, target[:6])),
+                abs(follower.gripper - target[6]),
+            )
+        return now - self._alignment_started_at, errors
 
     def _fresh(self, now):
         required = [(source, side) for source in ("master", "follower") for side in SIDES]
@@ -228,8 +258,15 @@ class TeleopSafety:
                 return False, f"{side}: automatic gripper alignment distance exceeds threshold"
         self._aligning = True
         self._alignment_first = True
+        self._alignment_targets = {
+            side: self._samples[("master", side)].joints
+            + (self._samples[("master", side)].gripper,)
+            for side in SIDES
+        }
+        self._alignment_started_at = float(now)
+        self._alignment_in_tolerance_since = None
         self.armed = True
-        return True, "armed; absolute alignment active"
+        return True, "armed; frozen-target alignment active; hold both masters still"
 
     def commands(self, now):
         if not self.armed or self.fault is not None:
@@ -248,28 +285,67 @@ class TeleopSafety:
             )
             for side in SIDES
         }
+        alignment_complete = False
         if self._aligning:
             for side, (master, follower) in samples.items():
+                target = self._alignment_targets[side]
+                master_joint_drift = max(
+                    abs(current - frozen)
+                    for current, frozen in zip(master[:6], target[:6])
+                )
+                if master_joint_drift > self.limits.max_alignment_master_joint_drift_rad:
+                    self._latch(
+                        f"master_{side}: moved {master_joint_drift:.6g} rad during alignment; "
+                        "disarm and retry"
+                    )
+                    return None
+                master_gripper_drift = abs(master[6] - target[6])
+                if (
+                    master_gripper_drift
+                    > self.limits.max_alignment_master_gripper_drift_m
+                ):
+                    self._latch(
+                        f"master_{side}: gripper moved {master_gripper_drift:.6g} m "
+                        "during alignment; disarm and retry"
+                    )
+                    return None
                 if any(
-                    abs(target - current) > self.limits.max_alignment_joint_error_rad
-                    for current, target in zip(follower[:6], master[:6])
+                    abs(desired - current) > self.limits.max_alignment_joint_error_rad
+                    for current, desired in zip(follower[:6], target[:6])
                 ):
                     self._latch(f"{side}: automatic joint alignment distance exceeded threshold")
                     return None
                 if (
-                    abs(master[6] - follower[6])
+                    abs(target[6] - follower[6])
                     > self.limits.max_alignment_gripper_error_m
                 ):
                     self._latch(f"{side}: automatic gripper alignment distance exceeded threshold")
                     return None
-        alignment_complete = self._aligning and not self._alignment_first and all(
-            all(
-                abs(target - current) <= self.limits.alignment_joint_tolerance_rad
-                for current, target in zip(follower[:6], master[:6])
+            elapsed, errors = self.alignment_status(now)
+            if elapsed > self.limits.alignment_timeout_sec:
+                detail = "; ".join(
+                    f"{side} joint={joint:.6g} rad gripper={gripper:.6g} m"
+                    for side, (joint, gripper) in errors.items()
+                )
+                self._latch(
+                    f"alignment timed out after {elapsed:.1f} s: {detail}"
+                )
+                return None
+            in_tolerance = all(
+                joint <= self.limits.alignment_joint_tolerance_rad
+                and gripper <= self.limits.alignment_gripper_tolerance_m
+                for joint, gripper in errors.values()
             )
-            and abs(master[6] - follower[6]) <= self.limits.alignment_gripper_tolerance_m
-            for master, follower in samples.values()
-        )
+            if in_tolerance:
+                if self._alignment_in_tolerance_since is None:
+                    self._alignment_in_tolerance_since = float(now)
+                alignment_complete = (
+                    not self._alignment_first
+                    and now - self._alignment_in_tolerance_since
+                    >= self.limits.alignment_settle_sec
+                )
+            else:
+                self._alignment_in_tolerance_since = None
         for side in SIDES:
             master_position, follower_position = samples[side]
             if self._aligning:
@@ -277,7 +353,7 @@ class TeleopSafety:
                 if self._alignment_first:
                     position = follower_position
                 else:
-                    position = master_position
+                    position = self._alignment_targets[side]
             else:
                 speeds[side] = self.limits.speed_percent
                 position = master_position
@@ -291,5 +367,8 @@ class TeleopSafety:
         self._alignment_first = False
         if alignment_complete:
             self._aligning = False
+            self._alignment_targets.clear()
+            self._alignment_started_at = None
+            self._alignment_in_tolerance_since = None
         self._command_speeds = speeds
         return commands

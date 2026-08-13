@@ -24,6 +24,16 @@ class TeleopNode(Node):
             ("max_alignment_gripper_error_m", defaults.max_alignment_gripper_error_m),
             ("alignment_joint_tolerance_rad", defaults.alignment_joint_tolerance_rad),
             ("alignment_gripper_tolerance_m", defaults.alignment_gripper_tolerance_m),
+            ("alignment_timeout_sec", defaults.alignment_timeout_sec),
+            ("alignment_settle_sec", defaults.alignment_settle_sec),
+            (
+                "max_alignment_master_joint_drift_rad",
+                defaults.max_alignment_master_joint_drift_rad,
+            ),
+            (
+                "max_alignment_master_gripper_drift_m",
+                defaults.max_alignment_master_gripper_drift_m,
+            ),
             ("max_joint_step_rad", defaults.max_joint_step_rad),
             ("max_gripper_step_m", defaults.max_gripper_step_m),
             ("alignment_speed_percent", defaults.alignment_speed_percent),
@@ -49,6 +59,7 @@ class TeleopNode(Node):
         )
         self.safety = TeleopSafety(limits)
         self._last_reported_fault = None
+        self._last_alignment_report_at = None
         qos = QoSProfile(depth=1)
         self._command_publishers = {
             side: self.create_publisher(
@@ -87,10 +98,14 @@ class TeleopNode(Node):
 
     def _set_armed(self, request, response):
         if request.data:
-            response.success, response.message = self.safety.arm(time.monotonic())
+            now = time.monotonic()
+            response.success, response.message = self.safety.arm(now)
+            if response.success:
+                self._last_alignment_report_at = now
         else:
             self.safety.disarm()
             self._last_reported_fault = None
+            self._last_alignment_report_at = None
             response.success, response.message = True, "disarmed; fault and cached inputs cleared"
         self.get_logger().info(response.message)
         return response
@@ -98,12 +113,26 @@ class TeleopNode(Node):
     def _publish(self):
         before = self.safety.fault
         aligning_before = self.safety.aligning
-        commands = self.safety.commands(time.monotonic())
+        now = time.monotonic()
+        commands = self.safety.commands(now)
         self._report_new_fault(before)
         if commands is None:
             return
+        if (
+            self.safety.aligning
+            and self._last_alignment_report_at is not None
+            and now - self._last_alignment_report_at >= 1.0
+        ):
+            elapsed, errors = self.safety.alignment_status(now)
+            detail = "; ".join(
+                f"{side} joint={joint:.4f} rad gripper={gripper:.4f} m"
+                for side, (joint, gripper) in errors.items()
+            )
+            self.get_logger().info(f"alignment {elapsed:.1f}s: {detail}")
+            self._last_alignment_report_at = now
         if self.safety.fault is None and aligning_before and not self.safety.aligning:
-            self.get_logger().info("dual-arm absolute alignment complete")
+            self.get_logger().info("dual-arm alignment complete; live follow active")
+            self._last_alignment_report_at = None
         stamp = self.get_clock().now().to_msg()
         messages = {}
         for side in SIDES:

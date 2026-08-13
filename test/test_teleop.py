@@ -73,6 +73,9 @@ class TeleopMappingTest(unittest.TestCase):
         self.assertIn("alignment_speed_percent: 100.0", teleop)
         self.assertIn("alignment_joint_tolerance_rad: 0.02", teleop)
         self.assertIn("alignment_gripper_tolerance_m: 0.002", teleop)
+        self.assertIn("alignment_timeout_sec: 15.0", teleop)
+        self.assertIn("alignment_settle_sec: 0.3", teleop)
+        self.assertIn("max_alignment_master_joint_drift_rad: 0.05", teleop)
         self.assertIn("speed_percent: 100.0", teleop)
         self.assertIn("gripper_effort: 1.0", teleop)
 
@@ -82,13 +85,20 @@ class TeleopMappingTest(unittest.TestCase):
 
 class TeleopSafetyTest(unittest.TestCase):
     def test_unarmed_has_no_commands_and_sides_remain_independent(self):
-        safety = TeleopSafety(TeleopLimits(max_joint_abs_rad=5.0))
+        safety = TeleopSafety(
+            TeleopLimits(
+                max_joint_abs_rad=5.0,
+                stale_timeout_sec=1.0,
+                alignment_settle_sec=0.1,
+            )
+        )
         left = (0.01, 0.02, 0.03, 0.04, 0.05, 0.06)
         right = (-0.01, -0.02, -0.03, -0.04, -0.05, -0.06)
         seed(safety, left, right)
         self.assertIsNone(safety.commands(0.0))
         self.assertEqual(
-            safety.arm(0.0), (True, "armed; absolute alignment active")
+            safety.arm(0.0),
+            (True, "armed; frozen-target alignment active; hold both masters still"),
         )
         commands = safety.commands(0.0)
         self.assertEqual(commands["left"], left + (0.02,))
@@ -96,6 +106,8 @@ class TeleopSafetyTest(unittest.TestCase):
         self.assertTrue(safety.aligning)
         self.assertEqual(safety.command_speed_percent("left"), 100.0)
         self.assertEqual(safety.commands(0.0)["left"], left + (0.02,))
+        self.assertTrue(safety.aligning)
+        self.assertEqual(safety.commands(0.11)["left"], left + (0.02,))
         self.assertFalse(safety.aligning)
 
     def test_absolute_alignment_holds_first_then_targets_both_sides_together(self):
@@ -104,6 +116,8 @@ class TeleopSafetyTest(unittest.TestCase):
                 max_joint_abs_rad=2.0,
                 max_joint_step_rad=0.5,
                 max_gripper_step_m=0.05,
+                stale_timeout_sec=1.0,
+                alignment_settle_sec=0.1,
             )
         )
         master = {
@@ -122,7 +136,8 @@ class TeleopSafetyTest(unittest.TestCase):
             safety.update_follower(side, JOINT_ORDER, follower[side] + (0.0,), 0.0)
 
         self.assertEqual(
-            safety.arm(0.0), (True, "armed; absolute alignment active")
+            safety.arm(0.0),
+            (True, "armed; frozen-target alignment active; hold both masters still"),
         )
         commands = safety.commands(0.0)
         self.assertEqual(commands["left"], follower_position["left"])
@@ -138,12 +153,74 @@ class TeleopSafetyTest(unittest.TestCase):
         self.assertTrue(safety.aligning)
         safety.update_follower("right", JOINT_ORDER, commands["right"], 0.01)
         safety.commands(0.01)
+        self.assertTrue(safety.aligning)
+        safety.commands(0.05)
+        self.assertTrue(safety.aligning)
+        safety.commands(0.12)
         self.assertFalse(safety.aligning)
-        commands = safety.commands(0.02)
-        self.assertEqual(commands["left"], master["left"] + (0.04,))
+        live_left = (0.31,) + (0.0,) * 5
+        safety.update_master(
+            "left",
+            MASTER_GRIPPER_ORDER,
+            live_left + (0.0, 0.02, -0.02),
+            0.13,
+        )
+        commands = safety.commands(0.13)
+        self.assertEqual(commands["left"], live_left + (0.04,))
         self.assertEqual(commands["right"], master["right"] + (0.04,))
         self.assertEqual(safety.command_speed_percent("left"), 100.0)
         self.assertEqual(safety.command_speed_percent("right"), 100.0)
+
+    def test_alignment_freezes_target_and_faults_if_master_moves_too_far(self):
+        safety = TeleopSafety(
+            TeleopLimits(
+                stale_timeout_sec=1.0,
+                max_joint_step_rad=0.2,
+                max_alignment_master_joint_drift_rad=0.05,
+            )
+        )
+        target = (0.3,) + (0.0,) * 5
+        for side in ("left", "right"):
+            safety.update_master(
+                side, MASTER_GRIPPER_ORDER, target + (0.0, 0.01, -0.01), 0.0
+            )
+            safety.update_follower(side, JOINT_ORDER, (0.0,) * 6 + (0.02,), 0.0)
+        self.assertTrue(safety.arm(0.0)[0])
+        safety.commands(0.0)
+
+        small_move = (0.32,) + (0.0,) * 5 + (0.0, 0.01, -0.01)
+        self.assertTrue(
+            safety.update_master("left", MASTER_GRIPPER_ORDER, small_move, 0.01)
+        )
+        self.assertEqual(safety.commands(0.01)["left"], target + (0.02,))
+
+        large_move = (0.36,) + (0.0,) * 5 + (0.0, 0.01, -0.01)
+        self.assertTrue(
+            safety.update_master("left", MASTER_GRIPPER_ORDER, large_move, 0.02)
+        )
+        self.assertIsNone(safety.commands(0.02))
+        self.assertIn("moved", safety.fault)
+
+    def test_alignment_timeout_reports_both_side_residuals(self):
+        safety = TeleopSafety(
+            TeleopLimits(
+                stale_timeout_sec=1.0,
+                alignment_timeout_sec=0.2,
+                max_joint_step_rad=0.5,
+            )
+        )
+        for side, target in (("left", 0.3), ("right", -0.2)):
+            joints = (target,) + (0.0,) * 5
+            safety.update_master(
+                side, MASTER_GRIPPER_ORDER, joints + (0.0, 0.01, -0.01), 0.0
+            )
+            safety.update_follower(side, JOINT_ORDER, (0.0,) * 6 + (0.0,), 0.0)
+        self.assertTrue(safety.arm(0.0)[0])
+        safety.commands(0.0)
+        self.assertIsNone(safety.commands(0.21))
+        self.assertIn("alignment timed out", safety.fault)
+        self.assertIn("left joint=", safety.fault)
+        self.assertIn("right joint=", safety.fault)
 
     def test_teleop_requires_nine_dimensional_master_input(self):
         safety = TeleopSafety()

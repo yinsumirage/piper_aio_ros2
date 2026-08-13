@@ -25,11 +25,11 @@
   200 Hz。该结果不外推到其余三路。
 - 官方 `piper_read_slave_joint` 初始化期间观察到 13 个查询帧。它们不是运动帧或使能帧，
   检查中没有使能或运动机械臂；但这是非零 TX，因此该节点不能称为严格被动监听。
-- 当前代码的 39 个 Python 测试（另含 8 个 subtest）通过；teleop 覆盖严格 9D 名称映射、
-  `abs(joint7-joint8)` 夹爪开度、双侧原子 arming、首帧保持与直接绝对对齐、双侧同时切换、command 限位、step、stale
+- 当前代码的 41 个 Python 测试（另含 8 个 subtest）及 tmux/control shell 测试通过；teleop 覆盖严格 9D 名称映射、
+  `abs(joint7-joint8)` 夹爪开度、双侧原子 arming、首帧保持、冻结 master 目标、settle、超时、双侧同时切换、command 限位、step、stale
   和 fault latch。
 - 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command；显式 arm 后第一帧
-  保持各侧 follower 反馈，随后直接发送完整绝对目标，两侧一起进入 100 Hz/100% 同步；停止输入后
+  保持各侧 follower 反馈，随后追冻结目标并经 settle 后一起进入 100 Hz/100% live follow；停止输入后
   stale 锁存并停发，退出无残留进程。
 - 另一隔离 ROS 图以 11 个白名单 publisher 加两条官方 `/follower_*/joint_ctrl` 反馈运行真实
   `bag_preflight`，检查成功且没有 unexpected control publisher；退出无残留进程。
@@ -76,6 +76,9 @@
   输入静止且 CAN/topic 均在线；官方 follower 源码采用 80000（0.08 m）夹爪上限，且 `GripperCtrl`
   没有速度百分比参数。代码现改为 0.08 m 门限、首帧保持后发送完整目标、六关节 100% 以及
   `gripper_effort: 1.0`；该版本仅完成离线/隔离 ROS 验证，尚未真机复测。
+- 当前代码进一步把 alignment 与 live follow 严格分开：arm 时冻结 master，master 漂移会 fault，双侧
+  进入容差并稳定 `0.3 s` 后才切换，`15 s` 超时和每秒状态日志报告两侧残差。新增 tmux 三窗格与
+  显式 control 脚本；启动器默认不 enable、不 arm。以上只完成代码和隔离测试，未用脚本启动真机。
 - 相机未完成 serial 绑定和图像 topic 验证。
 - EEF 坐标系、四元数到 RPY 约定和跨设备时间同步未验证。两路 master 的 9D name/当前值已
   观测，但夹爪单位、方向、零点与完整行程仍未通过现场物理扰动标定。
@@ -92,8 +95,8 @@
   方向/单位、夹爪行程、跟踪精度、电机 ACK 或真实运动安全。
 - 本轮静态样本下，左侧最大主从关节误差约 `0.145 rad`（joint4），右侧约 `0.112 rad`
   （joint6）。当前实现不再要求人工把四臂摆到同一姿态：显式 arm 后第一条 command 保持 follower
-  当前姿态，随后让官方控制器以 100% 追 live master 的完整绝对目标；双侧反馈进入配置容差后才
-  报告 complete。夹爪没有独立速度字段，直接发送完整开度目标，`gripper_effort` 仅表示力矩。
+  当前姿态，随后让官方控制器以 100% 追 arm 时冻结的 master 目标；双侧反馈连续稳定后才进入实时
+  follow。夹爪没有独立速度字段，直接发送完整开度目标，`gripper_effort` 仅表示力矩。
   默认最大自动对齐距离 `1.0 rad` / `0.08 m` 尚未真机标定，也不执行机械零位回零。
 - 用户现场报告能证明初版流程在当时可运行并发现左右错误，但没有机器生成的 command/state
   日志，不能据此给出定量同步精度、最大安全速度或“没有危险”的一般性结论。

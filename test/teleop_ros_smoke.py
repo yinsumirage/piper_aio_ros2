@@ -125,8 +125,8 @@ def main():
         assert future.done() and future.result().success
         assert bridge.safety.fault is None
         print(
-            "PASS: unarmed=0, first command holds feedback, "
-            f"dual absolute sync={command_hz}/100%, stale=stopped, disarm=cleared"
+            "PASS: unarmed=0, frozen-target alignment settled atomically, "
+            f"live sync={command_hz}/100%, stale=stopped, disarm=cleared"
         )
     finally:
         executor.remove_node(probe)
