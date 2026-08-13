@@ -8,8 +8,8 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 output=$(PIPER_CAN_CONF=$repo/deploy/piper-can.conf "$installer" --dry-run)
 [[ $(grep -c '^SUBSYSTEM=="net"' <<< "$output") -eq 4 ]]
-grep -q '002300374148570D20343133.*can_slave_l' <<< "$output"
-grep -q '003400204148570A20343133.*can_slave_r' <<< "$output"
+grep -q '002300374148570D20343133.*can_slave_r' <<< "$output"
+grep -q '003400204148570A20343133.*can_slave_l' <<< "$output"
 grep -q '004400314148570C20343133.*can_master_l' <<< "$output"
 grep -q '003B00234148570A20343133.*can_master_r' <<< "$output"
 grep -q '/etc/udev/rules.d/70-piper-can.rules' <<< "$output"
@@ -65,8 +65,8 @@ expect_fail "$tmp_dir/long-name.conf"
 
 cat > "$tmp_dir/bad-bitrate.conf" <<'EOF'
 BITRATE=500000
-002300374148570D20343133 can_slave_l
-003400204148570A20343133 can_slave_r
+002300374148570D20343133 can_slave_r
+003400204148570A20343133 can_slave_l
 004400314148570C20343133 can_master_l
 003B00234148570A20343133 can_master_r
 EOF
