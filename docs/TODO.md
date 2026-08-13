@@ -11,7 +11,7 @@
 | 四路 CAN 稳定绑定 | 真机已验证 | 四路均为 1 Mbps、UP，且被动监听到真实流 |
 | 四臂 ROS 2 编排 | 真机角色错误已定位 | 四路反馈约 200 Hz；用户运动确认 master 左右正确、两路 follower 的已部署接口标签物理反向；ROS 参数补偿待回归 |
 | 真机主从遥操作 | 初版流程已由用户完成 | arm、左右单侧和双侧可运行且动作基本符合；发现 follower 左右反接与 10% 过慢，新的 relative/30% 版本尚未真机回归 |
-| RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
+| RealSense ROS wrapper | 已安装，三台已绑定并可录 | 三台 D435 已按 serial→角色启动，正式角色 10 秒短包读回通过；长时性能/重连待验收 |
 | bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 38 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
 | 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
 | 硬件 replay | **未实现，刻意禁用** | 当前 replay 只读 shape；`--execute` 明确拒绝，不创建 publisher |
@@ -86,16 +86,23 @@ publisher 失败，不因官方反馈 topic 误报。
 
 ## P0：固定三台 RealSense 的物理角色
 
-- [ ] 接入三台相机后保存 `rs-enumerate-devices -s` 的 serial、型号和 USB 连接证据，人工确认
-  front、left wrist、right wrist 三个物理角色。
-- [ ] 新增 `config/cameras.yaml` 作为 serial → role 的唯一事实源，并新增只读
-  `scripts/realsense_status.sh` 检查缺失、重复或角色串换。
-- [ ] 新增三相机 launch，按 serial 启动官方 ROS 2 wrapper，稳定输出：
+- [x] 三台相机的 serial、型号、firmware、USB 3.2 和 physical port inventory 已保存；用户根据
+  serial-labelled 预览确认 front=`335622070696`、left=`349622073361`、
+  right=`335622072178`，不是按输出顺序分配。
+- [x] 新增 `config/cameras.yaml` 作为 serial → role 的唯一事实源，并新增只读
+  inventory、assignment 与 `scripts/camera_status.sh`；当前空配置会严格失败，待真机填写。
+- [x] 新增三相机 launch，按 serial 启动官方 ROS 2 wrapper，目标稳定输出：
   `/camera_f/color/image_raw`、`/camera_l/color/image_raw`、`/camera_r/color/image_raw`。
-- [ ] 第一版固定 RGB8、640×480、30 Hz，depth 默认关闭；不要先引入点云、对齐深度或额外图像
-  transport。
+- [x] launch 参数固定 RGB8、640×480、30 Hz，depth、pointcloud 与 align depth 默认关闭；
+  三台真实输出的 type/encoding/shape/timestamp 和短包已验证。
+- [x] 正式角色配置下三路目标 topic/status 和 9.87 秒 zstd bag 自动读回通过：
+  front/left/right 为 297/296/294 帧；这是绑定/录制 pipeline 验收，不是长时 30 Hz 验收。
 - [ ] 检查每路 encoding、shape、header stamp、QoS、实际帧率和 USB 带宽；运行至少 5 分钟，
   记录掉帧、设备重连和 timestamp 跳变。
+
+当前 Python status 消费率曾低于 30 Hz，但 C++ recorder 的短包已接近 30 Hz 并成功读回；按用户
+决定，稳定角色绑定和正式三路短 bag 已完成，30 Hz 长时/Hub 拓扑作为后续性能优化，不阻塞
+第一版录制 pipeline。
 
 验收：重启或重新插拔后角色不交换；三路各自稳定约 30 Hz；record config 无需改 topic 即可通过
 相机部分的 preflight。

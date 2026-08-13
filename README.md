@@ -227,9 +227,31 @@ ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: false}"
 description）和 ROS librealsense2 2.58.3 已安装在 `/opt/ros/humble`。系统级
 librealsense2 runtime/tools 2.58.1（含 `rs-enumerate-devices` 和 `realsense-viewer`）仍并存。
 
-当前 `rs-enumerate-devices -s` 未枚举到相机，因此尚无可记录的 serial，三台物理相机的
-serial 映射待连接设备后确定。这只是当前检查结果，连接状态和软件环境可能变化，配置相机
-topic 前需要重新确认。
+初审时 `rs-enumerate-devices -s` 未枚举到相机；稍后三台 D435 已接入并记录 inventory：
+`349622073361`、`335622070696`、`335622072178`。三台分别按 serial 有界启动时均报告 USB 3.2，
+成功打开 RGB8 640×480@30 并发布 `sensor_msgs/msg/Image`。用户随后根据按 serial 命名的真实
+预览确认 front=`335622070696`、left=`349622073361`、right=`335622072178`，映射已写入
+`config/cameras.yaml`，不是按输出或 USB 顺序推断。三台当时共享一条 5 Gbps Hub 链路，长时
+帧率/稳定性仍待验收。
+
+三路并发 Python status 的消费率曾明显低于 30 Hz；但 9.84 秒 C++ rosbag 短包已实际写入每路
+296 帧（共 888），自动读回三路类型/count/header timestamp 成功，left/right header rate 约
+29.98 Hz，front 约 26.88 Hz。Python subscriber 观测率不能替代真实 recorder count，因此 30 Hz
+长时性能仍作为后续优化项，不阻塞第一版绑定/录制 pipeline。默认 status 对 type、唯一
+publisher、RGB8、640×480 和 timestamp 严格失败，对 rate/gap 只告警；显式
+`--require-nominal-rate` 才启用严格诊断。`scripts/record_cameras.sh` 提供 serial/status、三路 RGB
+preflight、短包和自动读回统计，不补帧或把低帧率写成通过。
+
+写入用户确认的正式角色后，三路目标 topic 的 type、唯一 publisher、RGB8、640×480 和 timestamp
+门禁通过；9.87 秒 zstd 短包自动读回 front/left/right 分别 297/296/294 帧，共 887 帧。这个结果
+证明当前 serial 绑定和三路录制 pipeline 可用；不替代拔插重启、5 分钟性能或完整 11-topic
+episode 验收。
+
+仓库现提供严格的 `config/cameras.yaml`、inventory/assignment/status 工具和按 serial 选择设备的
+`three_realsense.launch.py`。配置要求三个非空且唯一 serial；角色未确认或设备缺失时 launch 会在
+创建节点前失败，不会按枚举顺序猜设备或长期等待。插线、角色认定、单台/三台 5 分钟验收、拔插
+回归和短 bag 读回的逐步流程见 [`docs/cameras.md`](docs/cameras.md)。这些离线代码尚不构成
+真机相机验证。
 
 ## 默认 topic 映射
 
@@ -304,7 +326,7 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
   arm、左右单侧及双侧 enable/运动流程并报告动作方向符合，但同时发现两路 follower 物理角色
   反接、10% 跟随过慢。当前 ROS 角色补偿、relative 软件零位和 30% 默认速度已经代码化，仍需
   再次真机回归；这不是长时间稳定性或完整物理安全认证。
-- 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改
-  相机启动逻辑。
+- 相机部署代码和用户确认的 serial→角色配置已加入；三台正式角色 topic、RGB profile/type 和
+  三路短包已验证，但长时帧率、USB 带宽和拔插重连仍待后续检查。
 
 许可证与来源归属见 `LICENSE` 和 `NOTICE`。
