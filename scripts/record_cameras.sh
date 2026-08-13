@@ -18,8 +18,9 @@ camera_config="${3:-$root/config/cameras.yaml}"
 ros2 run piper_aio_ros2 camera_status --config "$camera_config" --sample-seconds 3
 ros2 run piper_aio_ros2 bag_preflight --config "$config" --output-dir "$output"
 mapfile -t topics < <(ros2 run piper_aio_ros2 bag_preflight --config "$config" --list-topics)
+mkdir -p -- "$(dirname -- "$output")"
 
-record=(ros2 bag record --output "$output" --compression-mode file --compression-format zstd "${topics[@]}")
+record=(ros2 bag record --output "$output" --compression-mode message --compression-format zstd "${topics[@]}")
 if [[ -n "$duration" ]]; then
   [[ "$duration" =~ ^[1-9][0-9]*$ ]] || { echo "duration must be a positive integer" >&2; exit 2; }
   set +e

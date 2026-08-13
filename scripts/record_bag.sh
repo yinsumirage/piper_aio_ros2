@@ -14,6 +14,7 @@ config="${2:-$root/config/record_topics.yaml}"
 ros2 run piper_aio_ros2 bag_preflight --config "$config" --output-dir "$output"
 mapfile -t topics < <(ros2 run piper_aio_ros2 bag_preflight --config "$config" --list-topics)
 (( ${#topics[@]} > 0 )) || { echo "empty topic whitelist" >&2; exit 2; }
+mkdir -p -- "$(dirname -- "$output")"
 
 exec ros2 bag record \
   --output "$output" \

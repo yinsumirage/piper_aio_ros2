@@ -21,8 +21,13 @@ class CameraRecordingScriptTest(unittest.TestCase):
         self.assertIn("camera_status", script)
         self.assertIn("bag_preflight", script)
         self.assertIn("--compression-format zstd", script)
+        self.assertIn("--compression-mode message", script)
         self.assertIn("bag_inspect", script)
         self.assertNotIn("record -a", script)
+        for name in ("record_bag.sh", "record_cameras.sh"):
+            with self.subTest(name=name):
+                recording_script = (root / "scripts" / name).read_text(encoding="utf-8")
+                self.assertIn('mkdir -p -- "$(dirname -- "$output")"', recording_script)
 
 
 if __name__ == "__main__":
