@@ -10,7 +10,8 @@
     max_alignment_joint_error_rad: 1.0
     # Full official 80 mm opening mismatch is allowed to align.
     max_alignment_gripper_error_m: 0.08
-    alignment_joint_tolerance_rad: 0.02
+    # Calibrated above the observed 0.0365 rad zero-position residual.
+    alignment_joint_tolerance_rad: 0.05
     alignment_gripper_tolerance_m: 0.002
     alignment_timeout_sec: 15.0
     alignment_settle_sec: 0.3
@@ -28,6 +29,3 @@
     topics.follower_right: /follower_right/joint_states_feedback
     topics.command_left: /follower_left/joint_ctrl_cmd
     topics.command_right: /follower_right/joint_ctrl_cmd
-    # Controller command echoes used only for diagnostics; they are not motor ACKs.
-    topics.controller_echo_left: /follower_left/joint_ctrl
-    topics.controller_echo_right: /follower_right/joint_ctrl

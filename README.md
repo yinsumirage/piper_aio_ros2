@@ -180,7 +180,7 @@ topic，不做多余 remap。namespace 保证四臂 topic/service 不冲突。te
 `config/topics.yaml` 仅把采集器的 arm
 输入改到上述 namespaced feedback，相机 topic 未改。
 
-## 安全双臂 teleop（初版已真机运行，当前两阶段对齐待复测）
+## 安全双臂 teleop（两阶段对齐已真机观测，0.05 rad 完成门限待复测）
 
 `teleop.launch.py` 单独启动 `/dual_arm_teleop`。节点默认且固定从 unarmed 开始，不调用
 `/follower_*/enable_srv`，也不修改 `auto_enable: false`。两侧共同 arming：缺任一 master 或
@@ -193,9 +193,11 @@ alignment 期间两条 master 必须保持稳定，累计漂移超过配置门�
 `alignment_settle_sec` 后，bridge 才原子切换到实时 master follow，并报告
 `dual-arm alignment complete; live follow active`。
 
-alignment 每秒打印左右最大关节/夹爪剩余误差；超过 `alignment_timeout_sec` 仍未完成会 fault，并在
-错误中带出两侧残差，不再无限无声等待。默认 master 保持门限为 `0.05 rad` / `0.005 m`，settle 为
-`0.3 s`，timeout 为 `15 s`。这些仍是待真机标定的软件门限。
+alignment 在首秒每 `0.1 s`、随后每秒打印左右最大关节/夹爪剩余误差和 command publish cycle；
+超过 `alignment_timeout_sec` 仍未完成会 fault，并在错误中带出两侧残差，不再无限无声等待。
+一次真实双侧对齐在 `0.4 s` 内收敛到左 `0.0321 rad`、右 `0.0365 rad` 的近零位稳定残差，因此
+完成容差标定为 `0.05 rad`，夹爪仍为 `0.002 m`。默认 master 保持门限为 `0.05 rad` / `0.005 m`，
+settle 为 `0.3 s`，timeout 为 `15 s`；0.05 rad 版本仍需真机确认能切入 live follow。
 
 arm 前以及对齐过程中，任一侧主从关节或夹爪距离超过
 `max_alignment_joint_error_rad` / `max_alignment_gripper_error_m` 都会拒绝或锁存 fault。默认
@@ -226,7 +228,7 @@ command 显式填写 `velocity[6]` 和 `effort[6]=gripper_effort`：对齐及正
 推荐使用仓库自带的 tmux 会话，不必手工新建三个 SSH 终端：
 
 ```bash
-# 在仓库根目录执行；先检查四路 CAN，再创建 DRIVER / TELEOP / CONTROL 三个窗格
+# 在仓库根目录执行；DRIVER 固定为左侧 30%，右侧是 TELEOP / CONTROL
 ./scripts/teleop_session.sh start
 ```
 

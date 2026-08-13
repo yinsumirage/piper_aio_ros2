@@ -10,9 +10,9 @@
 |---|---|---|
 | 四路 CAN 稳定绑定 | 语义修正已部署 | 重启后四路目标 serial、稳定接口名、1 Mbps、UP 检查通过；业务角色仍以逐侧运动回归为准 |
 | 四臂 ROS 2 编排 | 映射已修正，待定量回归 | ROS 已恢复 left→`can_slave_l`、right→`can_slave_r`；四路节点和反馈可启动，仍需保存逐侧角色证据 |
-| 真机主从遥操作 | 初版流程已由用户完成 | 已实现冻结 master 目标的两阶段 alignment、15 s 超时和误差日志；100 Hz/100% 版本尚未真机回归 |
+| 真机主从遥操作 | 两阶段对齐已观察到真实收敛 | 100 Hz/100% 在 0.4 s 内收敛到 0.0321/0.0365 rad 静态残差；0.05 rad 完成门限尚待 live follow 回归 |
 | RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
-| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 41 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
+| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 43 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
 | 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
 | 硬件 replay | **未实现，刻意禁用** | 当前 replay 只读 shape；`--execute` 明确拒绝，不创建 publisher |
 
@@ -130,7 +130,8 @@ publisher 失败，不因官方反馈 topic 误报。
 ### 下一次：用 tmux 回归 follower 左右、两阶段对齐与 100 Hz/100% 同步
 
 - [ ] 重新 `colcon build --symlink-install`；不要继续使用已删除的 `/tmp/teleop_first_motion.yaml`。
-  从仓库根目录运行 `./scripts/teleop_session.sh start`，确认三个窗格出现且未自动 enable/arm。
+  从仓库根目录运行 `./scripts/teleop_session.sh start`，确认左侧 30% DRIVER、右上 TELEOP、右下
+  CONTROL 出现且未自动 enable/arm。
 - [ ] 现场清空、急停可触达；确认没有旧 ROS/control 进程，四路 CAN 正常，且 follower 参数为
   left→`can_slave_l`、right→`can_slave_r`，两路 `auto_enable=false`。
 - [ ] follower 不 enable，启动 teleop 并确认 unarmed 零 command；无需人工让四臂绝对对齐。
@@ -142,12 +143,13 @@ publisher 失败，不因官方反馈 topic 误报。
 - [ ] 两侧方向均通过后才同时 enable 两侧并 arm；观察每秒剩余误差和
   `dual-arm alignment complete; live follow active` 日志，再从小幅单关节开始确认 100 Hz/100% 同步，并按
   disarm→disable 顺序结束。
-- [ ] 下一次双侧 arm 保存 TELEOP 窗格从 `alignment start` 到 complete/timeout 的完整日志。重点比较
-  前 `1 s` 每 `0.1 s` 的 `publish_cycles`、最大误差关节、target/feedback，以及
-  `controller_echo_*_error`：echo 接近目标但 feedback 不变才支持“硬件静态残差”；echo 不接近目标则先查
-  enable/官方控制链。`/follower_*/joint_ctrl` 是命令回显，不是电机 ACK。
-- [ ] 只有上述真机日志确认两侧确实收敛到约 `0.03--0.04 rad` 的稳定残差后，才评估把
-  `alignment_joint_tolerance_rad` 从 `0.02` 标定到 `0.05`；不能仅因超时直接放宽安全门限。
+- [x] 双侧 arm 完整日志已确认约 100 Hz 发布，右 joint6 在 0.3 s 内从 `0.2013` 收敛到
+  `0.0428 rad`，随后两侧停在 `0.0321/0.0365 rad` 的近零位静态残差；夹爪已进入容差。
+  `/follower_*/joint_ctrl` 同时保持零值，不能在本机用作 command 消费证据或电机 ACK。
+- [x] 基于上述真机收敛证据，将 `alignment_joint_tolerance_rad` 从 `0.02` 标定到 `0.05`；绝对自动
+  对齐距离、master 漂移、step、stale 等其他安全门限不变。
+- [ ] 重启新版本并再次双侧 arm；预期对齐收敛后稳定 `0.3 s`，约 `0.7 s` 报告
+  `dual-arm alignment complete; live follow active`。随后只做小幅单关节和夹爪跟随，再逐步扩大。
 - [ ] 保存 command/follower state 的短时 bag 或文本统计，至少记录跟踪方向、峰值误差、主观延迟、
   fault/停止行为；结束后检查无残留进程。
 

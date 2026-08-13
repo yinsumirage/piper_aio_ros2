@@ -36,6 +36,7 @@ case "$action" in
     trap cleanup_partial_session ERR
     tmux split-window -h -t "$session:teleop.0" "$pane teleop"
     tmux split-window -v -t "$session:teleop.1" "$pane control"
+    tmux set-window-option -t "$session:teleop" main-pane-width 30%
     tmux select-layout -t "$session:teleop" main-vertical >/dev/null
     tmux set-option -t "$session" mouse on
     tmux set-window-option -t "$session:teleop" remain-on-exit on

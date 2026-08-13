@@ -25,7 +25,7 @@
   200 Hz。该结果不外推到其余三路。
 - 官方 `piper_read_slave_joint` 初始化期间观察到 13 个查询帧。它们不是运动帧或使能帧，
   检查中没有使能或运动机械臂；但这是非零 TX，因此该节点不能称为严格被动监听。
-- 当前代码的 42 个 Python 测试（另含 8 个 subtest）及 tmux/control shell 测试通过；teleop 覆盖严格 9D 名称映射、
+- 当前代码的 43 个 Python 测试（另含 8 个 subtest）及 tmux/control shell 测试通过；teleop 覆盖严格 9D 名称映射、
   `abs(joint7-joint8)` 夹爪开度、双侧原子 arming、首帧保持、冻结 master 目标、settle、超时、双侧同时切换、command 限位、step、stale
   和 fault latch。
 - 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command；显式 arm 后第一帧
@@ -84,10 +84,18 @@
   夹爪分别为 `0.0004 m`、`0.0002 m`；由于关节完成门限仍为 `0.02 rad`，最终在 `15 s` 按设计
   fault。随后 `stop` 成功 disarm 并 disable 两侧。现有旧日志从第 1 秒才开始记录，无法区分
   “第一个 1 秒内已运动到静态残差”与“控制链未实际执行目标”，不能把这次写成已完成对齐。
-- 代码现增加 alignment 首帧完整 target/feedback、前 1 秒每 `0.1 s` 最大误差关节、后续每秒误差、
-  command publish cycle 以及官方 `/follower_*/joint_ctrl` controller echo 误差。controller echo 仅是
-  控制桥接器/CAN 命令回显，不是电机 ACK。新增诊断已通过 42 个 pytest、colcon 21 项测试和隔离
-  ROS synthetic smoke，尚待下一次真机 arm 留存日志；在证据出来前不放宽 `0.02 rad` 门限。
+- 第二次真机 arm 保存了完整诊断：command publish cycle 稳定为约 100 Hz；右 joint6 误差在
+  `0.1/0.2/0.3 s` 从 `0.2013` 降到 `0.1279/0.0428 rad`，证明 follower 实际执行了对齐，而不是
+  “完全没动”。约 `0.4 s` 后剩余最大值变成近零位小角：左 joint2/3 为 `0.0307/0.0321 rad`，
+  右 joint2/3 为 `0.0362/0.0365 rad`，对应 feedback 稳定为零；夹爪误差为 `0.0004/0.0002 m`。
+  因旧完成门限为 `0.02 rad`，该真实静态残差持续到 15 s timeout。
+- 同一窗口中官方 `/follower_*/joint_ctrl` 始终显示零值，尽管 follower feedback 明确发生收敛，
+  因而本机不能用该 topic 判断目标是否被消费，更不能当作电机 ACK。代码保留首帧 target/feedback、
+  最大误差关节和 publish cycle，移除会误导的 controller echo 日志；基于上述真机残差把 alignment
+  完成容差标定为 `0.05 rad`。该版本通过 43 个 pytest、colcon 21 项测试和隔离 ROS smoke，尚待
+  真机确认会在约 `0.7 s` settle 后进入 live follow。
+- tmux 保持左 DRIVER、右上 TELEOP、右下 CONTROL，但将 DRIVER 明确限制为 30% 宽；临时 tmux
+  会话验证右侧两窗获得约 70% 宽度。布局测试未启动 ROS 或硬件。
 - 相机未完成 serial 绑定和图像 topic 验证。
 - EEF 坐标系、四元数到 RPY 约定和跨设备时间同步未验证。两路 master 的 9D name/当前值已
   观测，但夹爪单位、方向、零点与完整行程仍未通过现场物理扰动标定。

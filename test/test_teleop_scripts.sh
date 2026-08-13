@@ -13,6 +13,7 @@ if bash scripts/teleop_pane.sh invalid >/dev/null 2>&1; then
 fi
 grep -q 'startup never enables or arms hardware' scripts/teleop_pane.sh
 grep -q 'piper_single_ctrl' scripts/teleop_session.sh
+grep -q 'main-pane-width 30%' scripts/teleop_session.sh
 grep -q 'call_arm false' scripts/teleop_control.sh
 grep -q 'disable_both' scripts/teleop_control.sh
 echo 'teleop tmux/control script tests: PASS'

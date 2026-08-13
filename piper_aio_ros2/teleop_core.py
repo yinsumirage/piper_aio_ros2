@@ -50,7 +50,7 @@ class TeleopLimits:
     max_gripper_abs_m: float = 0.08
     max_alignment_joint_error_rad: float = 1.0
     max_alignment_gripper_error_m: float = 0.08
-    alignment_joint_tolerance_rad: float = 0.02
+    alignment_joint_tolerance_rad: float = 0.05
     alignment_gripper_tolerance_m: float = 0.002
     alignment_timeout_sec: float = 15.0
     alignment_settle_sec: float = 0.3
