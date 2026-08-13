@@ -8,7 +8,7 @@ package_name = "piper_aio_ros2"
 
 setup(
     name=package_name,
-    version="0.1.0",
+    version="0.2.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -20,7 +20,7 @@ setup(
     zip_safe=True,
     maintainer="yinsumirage",
     maintainer_email="yinsumirage@gmail.com",
-    description="Piper AIO collection, explicitly armed dual-arm teleop, and dry-run replay tools",
+    description="Piper RealSense collection, explicitly armed dual-arm teleop, and dry-run replay tools",
     license="MIT",
     entry_points={
         "console_scripts": [

@@ -1,7 +1,7 @@
-# 数据闭环 v0
+# 数据闭环
 
-本仓库把一个 episode 分成三层：显式白名单 rosbag 保存原始 ROS 消息，离线转换为
-canonical HDF5 schema v1，再导出为本地 LeRobot Dataset v3。录包和转换工具只订阅/读取
+本仓库 `0.2.0` 把一个 episode 分成三层：显式白名单 rosbag 保存原始 ROS 消息，离线转换为
+canonical HDF5 schema `1`，再导出为本地 LeRobot Dataset v3。录包和转换工具只订阅/读取
 数据，不启动驱动、相机、控制节点，不使能机械臂，也不发送控制消息。
 
 ## 录包合同
@@ -44,11 +44,11 @@ ros2 run piper_aio_ros2 bag_preflight --config config/record_topics.yaml --outpu
 上述命令假定所需 publisher 已经由用户按独立安全流程启动；本仓库的录包脚本不会代为启动。
 默认 `config/record_topics.yaml` 是包含三路 RGB 的 11-topic 整体 profile；
 `scripts/record_cameras.sh` + `config/camera_record_topics.yaml` 是相机-only 诊断案例。
-`record_bag.sh` 的第二个参数可以换成自定义 stream config，从而录制 topic 子集；但是当前
-canonical HDF5/LeRobot v3 schema 要求三路 RGB，无图像 bag 只能视为原始诊断数据，不能直接走
-现有完整 episode 转换。
+`record_bag.sh` 的第二个参数可以换成另一份 stream config，但当前 loader 要求每份配置都包含恰好
+三路 RGB；无图像或少于三相机的 profile 尚未实现。完整 episode 转换还要求双侧 state、EEF、
+intent，并默认要求双侧 executed command。
 
-## canonical HDF5 schema v1
+## canonical HDF5 schema 1
 
 一个 rosbag 目录转换成一个 HDF5 episode。14 维关节顺序固定为：
 
@@ -154,4 +154,4 @@ command。两路真实 master 已确认严格 9D name、占位 `gripper=0` 及 `
 后续真机运动暴露左右原始差值符号不一致，因此 canonical position 已统一为开度幅值。这些仍不是
 硬件 ACK、夹爪完整行程标定或修复后的真实四臂运动验证。最新 bridge 采用官方控制代码中的
 80 mm 上限，首帧保持 follower 后发送完整 master 绝对目标；`velocity[6]=100` 只控制六个臂关节，
-`gripper_effort=1.0` 是夹爪力矩而非速度。该快速对齐版本仍需真机回归。
+`gripper_effort=1.0` 是夹爪力矩而非速度。当前 0.05 rad 完成门限仍需保存一次完整 live-follow 回归。
