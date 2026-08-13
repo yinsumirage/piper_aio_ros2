@@ -44,6 +44,7 @@ def follower_values(names, values):
 
 @dataclass(frozen=True)
 class TeleopLimits:
+    alignment_mode: str = "relative"
     publish_hz: float = 30.0
     stale_timeout_sec: float = 0.2
     max_joint_abs_rad: float = 3.0
@@ -52,10 +53,12 @@ class TeleopLimits:
     initial_gripper_error_m: float = 0.01
     max_joint_step_rad: float = 0.05
     max_gripper_step_m: float = 0.005
-    speed_percent: float = 10.0
+    speed_percent: float = 30.0
     gripper_effort: float = 0.5
 
     def __post_init__(self):
+        if self.alignment_mode not in ("absolute", "relative"):
+            raise ValueError("alignment_mode must be absolute or relative")
         positive = (
             self.publish_hz,
             self.stale_timeout_sec,
@@ -102,11 +105,13 @@ class TeleopSafety:
         self.armed = False
         self.fault = None
         self._samples = {}
+        self._offsets = {}
 
     def _latch(self, reason):
         if self.fault is None:
             self.fault = reason
         self.armed = False
+        self._offsets.clear()
         return False
 
     def _check_side(self, side):
@@ -159,6 +164,7 @@ class TeleopSafety:
         self.armed = False
         self.fault = None
         self._samples.clear()
+        self._offsets.clear()
 
     def _fresh(self, now):
         required = [(source, side) for source in ("master", "follower") for side in SIDES]
@@ -181,18 +187,29 @@ class TeleopSafety:
         if not fresh:
             return False, reason
 
+        offsets = {}
         for side in SIDES:
             master = self._samples[("master", side)]
             follower = self._samples[("follower", side)]
-            joint_error = max(abs(a - b) for a, b in zip(master.joints, follower.joints))
-            if joint_error > self.limits.initial_joint_error_rad:
-                return False, f"{side}: initial joint alignment exceeds threshold"
             if master.gripper is None:
                 return False, f"{side}: teleop requires a 9D master input with gripper"
-            if abs(master.gripper - follower.gripper) > self.limits.initial_gripper_error_m:
-                return False, f"{side}: initial gripper alignment exceeds threshold"
+            master_position = master.joints + (master.gripper,)
+            follower_position = follower.joints + (follower.gripper,)
+            if self.limits.alignment_mode == "absolute":
+                joint_error = max(abs(a - b) for a, b in zip(master.joints, follower.joints))
+                if joint_error > self.limits.initial_joint_error_rad:
+                    return False, f"{side}: initial joint alignment exceeds threshold"
+                if abs(master.gripper - follower.gripper) > self.limits.initial_gripper_error_m:
+                    return False, f"{side}: initial gripper alignment exceeds threshold"
+                offsets[side] = (0.0,) * 7
+            else:
+                offsets[side] = tuple(
+                    follower_value - master_value
+                    for master_value, follower_value in zip(master_position, follower_position)
+                )
+        self._offsets = offsets
         self.armed = True
-        return True, "armed"
+        return True, f"armed ({self.limits.alignment_mode} alignment)"
 
     def commands(self, now):
         if not self.armed or self.fault is not None:
@@ -203,5 +220,17 @@ class TeleopSafety:
         commands = {}
         for side in SIDES:
             master = self._samples[("master", side)]
-            commands[side] = master.joints + (master.gripper,)
+            position = tuple(
+                value + offset
+                for value, offset in zip(
+                    master.joints + (master.gripper,), self._offsets[side]
+                )
+            )
+            if any(abs(value) > self.limits.max_joint_abs_rad for value in position[:6]):
+                self._latch(f"command_{side}: joint absolute safety limit exceeded")
+                return None
+            if abs(position[6]) > self.limits.max_gripper_abs_m:
+                self._latch(f"command_{side}: gripper absolute safety limit exceeded")
+                return None
+            commands[side] = position
         return commands

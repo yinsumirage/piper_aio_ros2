@@ -25,17 +25,18 @@
   200 Hz。该结果不外推到其余三路。
 - 官方 `piper_read_slave_joint` 初始化期间观察到 13 个查询帧。它们不是运动帧或使能帧，
   检查中没有使能或运动机械臂；但这是非零 TX，因此该节点不能称为严格被动监听。
-- 当前代码的 34 个 Python 测试（另含 8 个 subtest）通过；teleop 覆盖严格 9D 名称映射、
-  `joint7-joint8` 夹爪、双侧原子 arming、初始对齐、限位、step、stale 和 fault latch。
+- 当前代码的 38 个 Python 测试（另含 8 个 subtest）通过；teleop 覆盖严格 9D 名称映射、
+  `joint7-joint8` 夹爪、双侧原子 arming、relative 无跳变、absolute 初始对齐、command 限位、
+  step、stale 和 fault latch。
 - 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command，显式 arm 后两路均
   收到有界 7D command，停止输入后 stale 锁存并停发，退出无残留进程。
 - 另一隔离 ROS 图以 11 个白名单 publisher 加两条官方 `/follower_*/joint_ctrl` 反馈运行真实
   `bag_preflight`，检查成功且没有 unexpected control publisher；退出无残留进程。
 - `colcon build --symlink-install` 和现有 `colcon test` 命令成功，teleop/four-arm launch 参数解析
   成功。现有 setuptools test 入口打印 `Ran 0 tests`，因此 Python 覆盖证据以单独 pytest 为准。
-- 2026-08-13 在 `ROS_DOMAIN_ID=231`、`ROS_LOCALHOST_ONLY=1` 的有界真实 CAN 窗口整体启动
-  `four_arm.launch.py`：runtime 参数确认 master left/right 分别使用 `can_master_l/r`，follower
-  left/right 分别使用 `can_slave_l/r`，四处 `gripper_exist=true`，两路 follower
+- 2026-08-13 在 `ROS_DOMAIN_ID=231`、`ROS_LOCALHOST_ONLY=1` 的有界真实 CAN 窗口整体启动初版
+  `four_arm.launch.py`：当时 runtime 参数确认 master left/right 分别使用 `can_master_l/r`，follower
+  left/right 分别使用已部署标签 `can_slave_l/r`，四处 `gripper_exist=true`，两路 follower
   `auto_enable=false`。没有调用 `/follower_*/enable_srv` 或发布 `enable_flag`。
 - 四路真实反馈均约 200 Hz：master left/right 分别约 `200.16/200.00 Hz`，follower left/right
   分别约 `200.00/200.00 Hz`。两路 master 实测 name 均严格为 9D
@@ -51,13 +52,19 @@
 - 成功采样窗口内四路 host TX 各增加 13 个启动查询包，TX error 为 0；此前一个完成节点初始化
   但采样程序失败的窗口也观察到同样增量。最终清理后无 driver/teleop 残留，连续 2 秒四路
   host TX 均不再增长。
+- 随后用户按未使能 arm、左右单侧、双侧的顺序完成初版绝对映射真机流程，报告动作方向和跟随
+  基本符合、没有明显异常；同时以真实运动确认 master 左右正确，但两路 follower 的已部署
+  `can_slave_l/r` 名称对应物理左右相反：master left 当时驱动物理右 follower，master right
+  驱动物理左 follower。10% 速度的主观跟随明显过慢。该项是用户现场观察，没有保存逐轴日志、
+  延迟、跟踪误差或完整安全测试记录。
 
 ## 已停止或未继续
 
-- 四路静态 ROS 反馈和 namespace→CAN 参数已验证，但没有由现场人员逐臂扰动，因此物理
-  left/right 接线、关节方向、夹爪方向与完整行程仍未验证。
-- `four_arm.launch.py` 已在隔离 ROS domain 整体只读启动；真实 `piper_single_ctrl` 只发布反馈，
-  未收到 command/enable。teleop 也仅验证真实输入下的 unarmed 零发布，尚未调用 arm。
+- 初版真机运动已经暴露 follower 物理左右与已部署接口标签相反；当前在 ROS 参数层交换
+  follower CAN，未修改 `/etc`/udev。这个补偿以及新的 relative 软件零位、30% 默认速度仍需
+  再次真机回归，不能由初版动作结果替代。
+- master 夹爪映射和 follower 运动方向得到现场正向反馈，但夹爪完整行程、逐轴定量跟踪误差、
+  stale/fault 的真实运动行为和长时间稳定性仍未留存可审计证据。
 - 相机未完成 serial 绑定和图像 topic 验证。
 - EEF 坐标系、四元数到 RPY 约定和跨设备时间同步未验证。两路 master 的 9D name/当前值已
   观测，但夹爪单位、方向、零点与完整行程仍未通过现场物理扰动标定。
@@ -73,5 +80,8 @@
 - teleop 的隔离 ROS command 只证明桥接器发布合同和安全门禁，不证明驱动消费、硬件 enable、
   方向/单位、夹爪行程、跟踪精度、电机 ACK 或真实运动安全。
 - 本轮静态样本下，左侧最大主从关节误差约 `0.145 rad`（joint4），右侧约 `0.112 rad`
-  （joint6），均超过 `0.10 rad` 初始对齐门限；这是下一次 arm 前必须先物理对齐的真实阻断项，
-  不能通过直接放宽阈值规避。
+  （joint6），均超过 `0.10 rad` 初始对齐门限；它会继续阻止可选的 `absolute` 模式。默认
+  `relative` 模式在 arm 时捕获 follower-master 偏置，第一条 command 保持 follower 当前姿态，
+  因此不要求四臂人工绝对对齐，也不执行物理回零。
+- 用户现场报告能证明初版流程在当时可运行并发现左右错误，但没有机器生成的 command/state
+  日志，不能据此给出定量同步精度、最大安全速度或“没有危险”的一般性结论。

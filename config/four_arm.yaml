@@ -13,14 +13,16 @@
 
 /follower_left/piper_ctrl:
   ros__parameters:
-    can_port: can_slave_l
+    # The deployed follower interface labels were proven physically reversed
+    # during the first motion test; compensate here without changing udev.
+    can_port: can_slave_r
     auto_enable: false
     gripper_exist: true
     gripper_val_mutiple: 1
 
 /follower_right/piper_ctrl:
   ros__parameters:
-    can_port: can_slave_r
+    can_port: can_slave_l
     auto_enable: false
     gripper_exist: true
     gripper_val_mutiple: 1

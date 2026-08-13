@@ -16,6 +16,7 @@ class TeleopNode(Node):
         super().__init__("dual_arm_teleop")
         defaults = TeleopLimits()
         for name, value in (
+            ("alignment_mode", defaults.alignment_mode),
             ("publish_hz", defaults.publish_hz),
             ("stale_timeout_sec", defaults.stale_timeout_sec),
             ("max_joint_abs_rad", defaults.max_joint_abs_rad),

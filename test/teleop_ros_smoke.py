@@ -41,14 +41,23 @@ def main():
         probe.create_subscription(JointState, f"/follower_{side}/joint_ctrl_cmd", receive, 10)
     client = probe.create_client(SetBool, "/dual_arm_teleop/arm")
 
+    master_positions = {
+        "left": [0.10] + [0.0] * 6 + [0.01, -0.01],
+        "right": [-0.10] + [0.0] * 6 + [0.01, -0.01],
+    }
+    follower_positions = {
+        "left": [-0.20] + [0.0] * 5 + [0.03],
+        "right": [0.20] + [0.0] * 5 + [0.04],
+    }
+
     def publish_inputs():
         for side in ("left", "right"):
             master = JointState()
             master.name = list(MASTER_GRIPPER_ORDER)
-            master.position = [0.0] * 7 + [0.01, -0.01]
+            master.position = master_positions[side]
             follower = JointState()
             follower.name = list(JOINT_ORDER)
-            follower.position = [0.0] * 6 + [0.02]
+            follower.position = follower_positions[side]
             publishers[("master", side)].publish(master)
             publishers[("follower", side)].publish(follower)
 
@@ -74,11 +83,14 @@ def main():
 
         spin_for(0.3, publish=True)
         assert counts["left"] > 0 and counts["right"] > 0, counts
-        for message in messages.values():
+        for side, message in messages.items():
             assert tuple(message.name) == JOINT_ORDER
             assert len(message.position) == 7
-            assert message.position[6] == 0.02
-            assert message.velocity[6] == 10.0
+            assert all(
+                abs(actual - expected) < 1e-12
+                for actual, expected in zip(message.position, follower_positions[side])
+            )
+            assert message.velocity[6] == 30.0
             assert message.effort[6] == 0.5
 
         spin_for(0.35)
@@ -95,7 +107,10 @@ def main():
             executor.spin_once(timeout_sec=0.01)
         assert future.done() and future.result().success
         assert bridge.safety.fault is None
-        print("PASS: unarmed=0, armed=bounded dual 7D, stale=stopped, disarm=cleared")
+        print(
+            "PASS: unarmed=0, relative arm=no jump, bounded dual 7D, "
+            "stale=stopped, disarm=cleared"
+        )
     finally:
         executor.remove_node(probe)
         executor.remove_node(bridge)

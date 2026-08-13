@@ -9,10 +9,10 @@
 | 能力 | 当前状态 | 已有证据与边界 |
 |---|---|---|
 | 四路 CAN 稳定绑定 | 真机已验证 | 四路均为 1 Mbps、UP，且被动监听到真实流 |
-| 四臂 ROS 2 编排 | 四路只读已验证 | 未使能窗口整体启动过四臂图；四路反馈约 200 Hz，namespace→CAN 参数与 schema 符合配置；物理左右仍待逐臂扰动确认 |
-| 真机主从遥操作 | unarmed 真机已验证 | 真实四路反馈下启动 bridge，4.02 秒两路 command 均为 0；未调用 arm/enable，未运动 |
+| 四臂 ROS 2 编排 | 真机角色错误已定位 | 四路反馈约 200 Hz；用户运动确认 master 左右正确、两路 follower 的已部署接口标签物理反向；ROS 参数补偿待回归 |
+| 真机主从遥操作 | 初版流程已由用户完成 | arm、左右单侧和双侧可运行且动作基本符合；发现 follower 左右反接与 10% 过慢，新的 relative/30% 版本尚未真机回归 |
 | RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
-| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 34 个 Python 测试通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
+| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 38 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
 | 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
 | 硬件 replay | **未实现，刻意禁用** | 当前 replay 只读 shape；`--execute` 明确拒绝，不创建 publisher |
 
@@ -66,13 +66,15 @@ publisher 失败，不因官方反馈 topic 误报。
 - [x] 默认 `armed=false`，未显式 arming 时不发布任何 command；bridge 永不自动调用
   `/follower_*/enable_srv`，从臂硬件使能保持独立、显式操作。
 - [x] command 发布前同时满足：左右 master 新鲜、左右 follower feedback 新鲜、消息 finite、
-  关节名称完整、主从初始差小于配置阈值。
+  关节名称完整且输入不越界。默认 `relative` 模式在 arm 时捕获每侧 follower-master 偏置，第一条
+  command 保持 follower 当前姿态；可选 `absolute` 模式仍要求主从初始差小于配置阈值。
 - [x] 加入保守且可配置的关节限位、单步最大变化、夹爪范围、发布频率和输入超时。超时或异常后
   停止发布并锁存 fault，必须人工重新 arming。
 - [x] 让录包中的 `executed_action_*` 精确记录 bridge 实际发布的 7 维 command。这里的
   `executed` 仍表示“已发给驱动的 commanded action”，不是电机 ACK；物理跟踪看 follower state。
-- [x] 纯函数测试覆盖：乱序 9D 映射、夹爪、左右隔离、限位、单步限制、stale、初始不对齐、
-  unarmed 零发布；再用隔离 ROS domain 做无硬件 topic/rate 测试。
+- [x] 纯函数测试覆盖：乱序 9D 映射、夹爪、左右隔离、relative 无跳变、absolute 初始不对齐、
+  command 限位、单步限制、stale 和 unarmed 零发布；再用隔离 ROS domain 做无硬件 topic/rate
+  测试。
 
 验收：不连接或不使能从臂也能证明节点默认零 command；合成 master 输入在显式 arming 后只产生
 受限的 7D command；stale、越界和解除 arming 均立即停止新 command。
@@ -104,34 +106,33 @@ publisher 失败，不因官方反馈 topic 误报。
   timeout 和结束后的残留进程/CAN 状态检查。
 - [x] 从臂软件 gate 未使能、bridge 未 arming：在隔离 ROS domain 整体启动四臂驱动，确认四路
   topic/schema/频率、namespace→CAN、两路 9D master 夹爪映射和 unarmed 零 command；未运动。
-- [ ] 由现场人员依次轻微扰动四条臂和两只 master 夹爪，确认物理 left/right 不串线，并验证
-  关节/夹爪方向、单位和可用行程；静态四路不同姿态不能单独证明物理角色没有接反。
-- [ ] 从臂未使能、bridge 显式 arming：观察生成的 command 与 master/follower 差值，仍不得运动；
-  验证 command 速度字段为保守值而不是 100%。
-- [ ] 只测试左侧：初始对齐后显式使能，做单关节小幅运动、停止、stale/fault 和夹爪测试；通过后
-  立即 disable。
-- [ ] 只测试右侧重复同一流程；左右单侧都通过后才允许双侧。
-- [ ] 双侧低速短时运行，核对左右不串线、command 与 follower state 的延迟/误差、停止行为和
-  `/actions/executed` 语义。
+- [x] 用户完成初版未使能 arm、左右单侧和双侧运动流程；动作基本符合，但真实运动证明 follower
+  已部署 `can_slave_l/r` 标签对应物理左右相反，且 10% 速度跟随过慢。该结果没有保存定量日志。
+- [ ] 回归 ROS 层 follower CAN 补偿：`/follower_left` 使用 `can_slave_r`，`/follower_right` 使用
+  `can_slave_l`；逐侧确认 master left/right 不再串到另一只物理 follower。
+- [ ] 回归默认 relative 软件零位：主从不必绝对对齐，未使能 arm 后第一条 command 应等于各侧
+  follower 当前反馈；arm 本身不得导致 follower 跳向 master，更不得自动物理回零。
+- [ ] 以默认 30% 重新做左、右、双侧短时运动，记录 command/state 的方向、延迟、跟踪误差、
+  停止行为和 `/actions/executed` 语义；若需继续提高速度，按一次一级的小步重新验收。
+- [ ] 单独验证真实 stale/fault：fault 后 bridge 停发，但仍需人工 disable follower；验证前不得
+  把 Ctrl+C 当作硬件 disable。
 
 验收：默认启动不运动；任何缺流、stale、越界或解除 arming 都不再产生 command；单侧和双侧
 方向、单位、夹爪、速度均经人工观察与记录确认。
 
-### 下一次（计划 2026-08-14）只做未使能 arming gate
+### 下一次：回归 follower 左右、relative 软件零位与 30% 速度
 
-本次静态样本按 7D canonical 顺序比较，左侧最大主从误差约 `0.145 rad`（joint4），右侧最大
-误差约 `0.112 rad`（joint6；joint4 约 `0.101 rad`），都超过当前
-`initial_joint_error_rad=0.10`，所以此姿态下显式 arm 应被拒绝。先物理对齐，不要先放宽阈值。
-
-- [ ] 现场清空、急停可触达；确认没有旧 ROS/control 进程，四路 CAN 状态正常且 host TX 稳定。
-- [ ] 从臂硬件不 enable，启动 `four_arm.launch.py`，复核 `auto_enable=false` 和四路新鲜反馈。
-- [ ] 人工把左右 master/follower 的 6 关节及夹爪对齐到门限内；只读计算并记录每轴差值。
-- [ ] 单独启动 `teleop.launch.py`；先确认两路 command 仍为 0、无 fault、arm service 存在。
-- [ ] 仅调用一次 `/dual_arm_teleop/arm` 的 `SetBool true`；硬件仍不 enable。若拒绝，记录理由并
-  disarm，不绕过门禁；若成功，仅观察左右 7D command、`velocity[6]=10`、`effort[6]=0.5` 和
-  左右映射，随后立即 `SetBool false`。
-- [ ] 结束后确认 command 停止、四个 driver/teleop 进程无残留、停止状态 host TX 不再增长。
-- [ ] 本次不测试硬件 enable 或运动；左、右、双侧低速动作继续保留为后续单独授权项。
+- [ ] 重新 `colcon build --symlink-install` 并 source overlay；不要继续使用已删除的
+  `/tmp/teleop_first_motion.yaml`，直接启动默认 `teleop.launch.py`。
+- [ ] 现场清空、急停可触达；确认没有旧 ROS/control 进程，四路 CAN 正常，且 follower 参数为
+  left→`can_slave_r`、right→`can_slave_l`，两路 `auto_enable=false`。
+- [ ] follower 不 enable，启动 teleop 并确认 unarmed 零 command；无需人工让四臂绝对对齐。
+- [ ] 仅软件 arm，核对响应为 `armed (relative alignment)`、两路第一条 7D command 分别等于当前
+  follower feedback、`velocity[6]=30`、`effort[6]=0.5`，随后 disarm。
+- [ ] 再依次只 enable 左、只 enable 右、最后双侧；每阶段 arm 后从小幅单关节开始，确认物理左右
+  已纠正、arm 无跳变且 30% 跟随可接受，并按 disarm→disable 顺序结束。
+- [ ] 保存 command/follower state 的短时 bag 或文本统计，至少记录跟踪方向、峰值误差、主观延迟、
+  fault/停止行为；结束后检查无残留进程。
 
 ## P0：首个真实 episode 闭环
 
@@ -162,7 +163,7 @@ publisher 失败，不因官方反馈 topic 误报。
 
 - [ ] 在真实数据合同稳定前继续保持硬件 replay 禁用。
 - [ ] 先实现纯离线时间轴检查和可视化，再实现隔离 ROS domain 的 command replay。
-- [ ] 若以后增加真机 `--execute`，必须复用 teleop 的 arming、初始对齐、限位、单步限制、stale、
+- [ ] 若以后增加真机 `--execute`，必须复用 teleop 的 arming、relative/absolute 模式、限位、单步限制、stale、
   显式 enable/disable 和单侧验收门禁；禁止从当前 dry-run 直接跳到双臂执行。
 
 ## v1 完成定义
@@ -173,5 +174,5 @@ publisher 失败，不因官方反馈 topic 误报。
 - 至少一个真实 11-topic episode 完成全链路转换、QC、LeRobot v3 回读和视频人工抽查。
 - 文档明确保留“commanded action 不等于电机 ACK”和“硬件 replay 尚未验证”的证据边界。
 
-下一项 teleop 工作是上面的“未使能 arming gate”：先物理对齐并验证门禁，再观察真实 7D
-command，仍不 enable 或运动。相机 serial 绑定必须等待三台设备实际接入后再填写，不能预造编号。
+下一项 teleop 工作是回归 follower 左右补偿、relative 软件零位和 30% 速度；不做四臂自动物理
+回零。相机 serial 绑定必须等待三台设备实际接入后再填写，不能预造编号。
