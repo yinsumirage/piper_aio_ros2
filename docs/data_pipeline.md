@@ -53,8 +53,9 @@ right_joint1..right_joint6, right_gripper
 
 所有 `JointState` 都按 `name` 映射，不能按数组前 7 项截取。普通 follower 的 7 维消息使用
 `gripper`；官方 master 的 9 维消息
-`joint1..joint6,gripper,joint7,joint8` 使用 `joint7 - joint8` 作为 canonical gripper，
-忽略固定占位的 `gripper`。position 必须完整且 finite；velocity/effort 缺失时补 0。
+`joint1..joint6,gripper,joint7,joint8` 使用 `abs(joint7 - joint8)` 作为 canonical gripper opening，
+忽略固定占位的 `gripper`。所有 position gripper 都归一化为非负开度；position 必须完整且 finite，
+velocity/effort 缺失时补 0。
 为兼容旧 `piper-aio` 遥操 publisher，唯一额外别名是 7D `joint0..joint6`：其中
 `joint0..joint5` 映射到 canonical `joint1..joint6`，`joint6` 映射到 gripper；它同样按
 `JointState.name` 重排并支持乱序，空 `name` 不做位置猜测。
@@ -143,4 +144,5 @@ inspect -> HDF5 -> validate，得到 30/30 帧且 `action_source=executed`。
 teleop 另在隔离 ROS domain 中验证了默认 unarmed 零 command、显式 arming 后左右均发布有界
 7D command、输入 stale 后停止；真实四路输入窗口也验证了 unarmed 时 4.02 秒左右均为零
 command。两路真实 master 已确认严格 9D name、占位 `gripper=0` 及 `joint7/joint8` 成对相反；
-这些仍不是硬件 ACK、夹爪物理标定或真实四臂运动验证。
+后续真机运动暴露左右原始差值符号不一致，因此 canonical position 已统一为开度幅值。这些仍不是
+硬件 ACK、夹爪完整行程标定或修复后的真实四臂运动验证。

@@ -45,6 +45,8 @@ def canonical_values(names, values, field, allow_missing=False):
     else:
         raise ValueError(f"{field} is missing gripper (or joint7/joint8)")
 
+    if field == "position":
+        result[-1] = abs(result[-1])
     if not all(math.isfinite(value) for value in result):
         raise ValueError(f"{field} contains non-finite values")
     return tuple(result)

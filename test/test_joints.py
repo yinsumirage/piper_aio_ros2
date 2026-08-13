@@ -27,7 +27,7 @@ class CanonicalJointTest(unittest.TestCase):
     def test_nine_dimensional_gripper_pair_wins_over_placeholder(self):
         message = SimpleNamespace(
             name=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "gripper", "joint7", "joint8"],
-            position=[1, 2, 3, 4, 5, 6, 0, 0.021, -0.021],
+            position=[1, 2, 3, 4, 5, 6, 0, -0.021, 0.021],
             velocity=[],
             effort=[1, 2, 3, 4, 5, 6, 999, 4, -4],
         )
@@ -35,6 +35,10 @@ class CanonicalJointTest(unittest.TestCase):
         self.assertAlmostEqual(result["position"][6], 0.042)
         self.assertEqual(result["velocity"], (0.0,) * 7)
         self.assertEqual(result["effort"][6], 8.0)
+
+    def test_seven_dimensional_position_normalizes_negative_gripper(self):
+        values = (0.0,) * 6 + (-0.04,)
+        self.assertEqual(canonical_values(JOINT_ORDER, values, "position")[6], 0.04)
 
     def test_missing_required_and_non_finite_position(self):
         with self.assertRaisesRegex(ValueError, "missing joint6"):

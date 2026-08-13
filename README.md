@@ -8,7 +8,7 @@
 
 截至 2026-08-13，四路稳定 CAN 接口、真实反馈和初版双臂 teleop 已完成分阶段现场运行；用户
 报告跟随基本正常，同时发现 follower 已部署左右标签反向和 10% 速度过慢。仓库现已按物理左右
-交换 follower serial→稳定名并撤销 ROS 层临时补偿；系统 `/etc`/实时接口仍待安装新规则并重启。
+交换 follower serial→稳定名并撤销 ROS 层临时补偿；系统规则已安装并在重启后通过四路状态检查。
 默认 teleop 已改为 10% 渐进绝对对齐、对齐后 100 Hz/80% 同步，这些新改动尚待真机回归。
 相机、EEF 语义和完整 episode 尚未验证。可审计边界见
 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
@@ -104,13 +104,12 @@ cd /home/engram/project/piper/piper_aio_ros2
 ./scripts/can_status.sh
 ```
 
-当前主机在重启前仍运行旧的两路 follower 名称，`can_status.sh` 应返回非零；这是待部署状态，
-不是脚本故障。`colcon build` 只把 ROS launch/config 安装进工作区；它不会写 `/etc`、reload
-udev、重命名或拉起 CAN，也不会安装/启用 systemd unit。完成重启后的 serial/状态只读复核前，
-不要启动 `four_arm.launch.py` 或 teleop。
+当前主机已完成正常重启，`can_status.sh` 实测四路均为目标 serial、稳定接口名、1 Mbps 和 UP。
+`colcon build` 只把 ROS launch/config 安装进工作区；它不会写 `/etc`、reload udev、重命名或拉起
+CAN，也不会安装/启用 systemd unit。新主机仍须完成下面的显式系统部署后才能启动驱动或 teleop。
 
-本次现有两路 UP 接口的同名循环交换不在线强改。先安装新 conf/udev 规则但不传
-`--activate`，再由一次正常重启让 udev 按 serial 重新命名；现有 service 已 enabled：
+本机当时没有在线强改两路 UP 接口的同名循环，而是先安装 conf/udev 规则，再由正常重启按 serial
+重新命名；现有 service 已 enabled：
 
 ```bash
 sudo ./deploy/install_can.sh
@@ -193,13 +192,16 @@ bridge 才整体切换为 100 Hz、80% 的直接绝对同步，避免半套系�
 
 arm 前以及对齐过程中，任一侧主从关节或夹爪距离超过
 `max_alignment_joint_error_rad` / `max_alignment_gripper_error_m` 都会拒绝或锁存 fault。默认
-`1.0 rad`、`0.05 m` 只是待真机标定的软件安全门限，不是自动规划能力或 Piper 物理极限。
+`1.0 rad`、`0.07 m` 只是待真机标定的软件安全门限，不是自动规划能力或 Piper 物理极限。默认
+夹爪对齐距离覆盖当前配置的完整开度范围；对齐仍按每周期 `0.001 m`、10% 逐步进行。
 
 官方 reader 源码在 `gripper_exist: true` 时构造 9D
 `joint1..joint6,gripper,joint7,joint8`；其中 `gripper` 为占位，bridge 用
-`joint7-joint8` 生成 7D `joint1..joint6,gripper`。四条物理臂均有夹爪，配置保持四处
+`abs(joint7-joint8)` 生成非负开度的 7D `joint1..joint6,gripper`。四条物理臂均有夹爪，配置保持四处
 `gripper_exist: true`。本机两路真实 master 已在未使能窗口确认严格 9D name、占位
-`gripper=0` 和相反的 `joint7/joint8`；当时 canonical 夹爪为左 `-0.0003 m`、右 `0.0 m`。
+`gripper=0` 和相反的 `joint7/joint8`；原始差值当时为左 `-0.0003 m`、右 `0.0 m`。由于实机进一步
+确认左右 master 的原始夹爪符号可能相反，而官方 follower command 使用开度绝对值，canonical
+position 统一为非负开度幅值。
 这只确认当前消息输入，夹爪物理方向、零点、单位与完整行程仍待现场扰动标定。映射器能严格
 解析 6D reader 输出用于兼容诊断，但 teleop arming 必须有 9D 夹爪输入，绝不会给第 7 维补零。
 

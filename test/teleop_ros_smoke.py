@@ -50,11 +50,11 @@ def main():
     client = probe.create_client(SetBool, "/dual_arm_teleop/arm")
 
     master_positions = {
-        "left": [0.03] + [0.0] * 6 + [0.002, -0.002],
+        "left": [0.03] + [0.0] * 6 + [-0.002, 0.002],
         "right": [-0.02] + [0.0] * 6 + [0.002, -0.002],
     }
     expected_targets = {
-        side: tuple(position[:6] + [position[7] - position[8]])
+        side: tuple(position[:6] + [abs(position[7] - position[8])])
         for side, position in master_positions.items()
     }
 

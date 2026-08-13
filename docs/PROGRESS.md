@@ -25,8 +25,8 @@
   200 Hz。该结果不外推到其余三路。
 - 官方 `piper_read_slave_joint` 初始化期间观察到 13 个查询帧。它们不是运动帧或使能帧，
   检查中没有使能或运动机械臂；但这是非零 TX，因此该节点不能称为严格被动监听。
-- 当前代码的 36 个 Python 测试（另含 8 个 subtest）通过；teleop 覆盖严格 9D 名称映射、
-  `joint7-joint8` 夹爪、双侧原子 arming、渐进绝对对齐、双侧同时切换、command 限位、step、stale
+- 当前代码的 38 个 Python 测试（另含 8 个 subtest）通过；teleop 覆盖严格 9D 名称映射、
+  `abs(joint7-joint8)` 夹爪开度、双侧原子 arming、渐进绝对对齐、双侧同时切换、command 限位、step、stale
   和 fault latch。
 - 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command；显式 arm 后第一帧
   保持各侧 follower 反馈，随后以 10% 有界渐进对齐，两侧一起切到 100 Hz/80% 绝对同步；停止输入后
@@ -42,7 +42,7 @@
 - 四路真实反馈均约 200 Hz：master left/right 分别约 `200.16/200.00 Hz`，follower left/right
   分别约 `200.00/200.00 Hz`。两路 master 实测 name 均严格为 9D
   `joint1..joint6,gripper,joint7,joint8`，占位 `gripper=0`；左侧 `joint7=-0.00015`、
-  `joint8=0.00015`，右侧均为 0，所以 `joint7-joint8` 分别为 `-0.0003 m` 和 `0.0 m`。
+  `joint8=0.00015`，右侧均为 0，所以原始 `joint7-joint8` 分别为 `-0.0003 m` 和 `0.0 m`。
   follower 均为 7D，样本夹爪分别为 `-0.0028 m`、`0.0003 m`。
 - 两路 follower 的原始 `arm_status/ctrl_mode/mode_feedback/teach_status/motion_status/err_code`
   在采样时均为 0。该消息不暴露六个电机的独立 enable bit，因此这里只确认软件
@@ -62,11 +62,14 @@
 ## 已停止或未继续
 
 - 初版真机运动已经暴露 follower 物理左右与已部署接口标签相反。仓库现已交换两路 follower
-  serial→稳定名，并让 ROS left/right 恢复使用语义 `can_slave_l/r`；当前 `/etc` 和实时接口仍是
-  旧映射，待安装新规则并重启。修正后的映射以及新的渐进绝对对齐、100 Hz/80% 正常同步仍需
-  再次真机回归，不能由初版动作结果替代。
+  serial→稳定名，并让 ROS left/right 恢复使用语义 `can_slave_l/r`；系统规则已安装，重启后
+  `can_status.sh` 确认四路目标 serial、稳定名、1 Mbps 和 UP。物理左右的逐侧回归仍需完整记录。
 - master 夹爪映射和 follower 运动方向得到现场正向反馈，但夹爪完整行程、逐轴定量跟踪误差、
   stale/fault 的真实运动行为和长时间稳定性仍未留存可审计证据。
+- 2026-08-13 的 100 Hz/80% 真机回归中，用户确认关节能够运动，但张开夹爪时 bridge 锁存
+  `left: automatic gripper alignment distance exceeded threshold` 并按设计停止双侧发布。只读样本显示
+  master-left 原始差值为负、master-right 为正，而 follower feedback/官方 command 使用非负开度；
+  这定位为 canonical 符号错误，不是 CAN 断开。开度幅值修复尚待真机复测。
 - 相机未完成 serial 绑定和图像 topic 验证。
 - EEF 坐标系、四元数到 RPY 约定和跨设备时间同步未验证。两路 master 的 9D name/当前值已
   观测，但夹爪单位、方向、零点与完整行程仍未通过现场物理扰动标定。
@@ -85,6 +88,6 @@
   （joint6）。当前实现不再要求人工把四臂摆到同一姿态：显式 arm 后第一条 command 保持 follower
   当前姿态，再从最新反馈以 10% 和有界单步渐进追到 live master，双侧到位后才切到
   100 Hz/80% 同步。
-  默认最大自动对齐距离 `1.0 rad` / `0.05 m` 尚未真机标定，也不执行机械零位回零。
+  默认最大自动对齐距离 `1.0 rad` / `0.07 m` 尚未真机标定，也不执行机械零位回零。
 - 用户现场报告能证明初版流程在当时可运行并发现左右错误，但没有机器生成的 command/state
   日志，不能据此给出定量同步精度、最大安全速度或“没有危险”的一般性结论。

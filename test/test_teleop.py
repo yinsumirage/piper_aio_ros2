@@ -31,8 +31,8 @@ class TeleopMappingTest(unittest.TestCase):
         values = tuple(reversed((1.0, 2.0, 3.0, 4.0, 5.0, 6.0)))
         self.assertEqual(master_values(names, values), ((1.0, 2.0, 3.0, 4.0, 5.0, 6.0), None))
 
-    def test_nine_dimensional_master_maps_joint7_minus_joint8(self):
-        by_name = dict(zip(MASTER_GRIPPER_ORDER, (1, 2, 3, 4, 5, 6, 0, 0.03, -0.02)))
+    def test_nine_dimensional_master_maps_gripper_opening_magnitude(self):
+        by_name = dict(zip(MASTER_GRIPPER_ORDER, (1, 2, 3, 4, 5, 6, 0, -0.03, 0.02)))
         names = tuple(reversed(MASTER_GRIPPER_ORDER))
         joints, gripper = master_values(names, [by_name[name] for name in names])
         self.assertEqual(joints, (1.0, 2.0, 3.0, 4.0, 5.0, 6.0))
@@ -68,8 +68,8 @@ class TeleopMappingTest(unittest.TestCase):
         self.assertIn("can_port: can_slave_r", right)
 
         teleop = (root / "config" / "teleop.yaml").read_text(encoding="utf-8")
-        self.assertNotIn("alignment_mode:", teleop)
         self.assertIn("publish_hz: 100.0", teleop)
+        self.assertIn("max_alignment_gripper_error_m: 0.07", teleop)
         self.assertIn("alignment_speed_percent: 10.0", teleop)
         self.assertIn("alignment_joint_step_rad: 0.01", teleop)
         self.assertIn("speed_percent: 80.0", teleop)
@@ -167,6 +167,24 @@ class TeleopSafetyTest(unittest.TestCase):
         success, reason = safety.arm(0.01)
         self.assertFalse(success)
         self.assertIn("gripper", reason)
+
+    def test_full_negative_master_gripper_range_aligns_as_positive_opening(self):
+        safety = TeleopSafety()
+        for side in ("left", "right"):
+            joint7, joint8 = (-0.035, 0.035) if side == "left" else (0.035, -0.035)
+            safety.update_master(
+                side,
+                MASTER_GRIPPER_ORDER,
+                (0.0,) * 6 + (0.0, joint7, joint8),
+                0.0,
+            )
+            safety.update_follower(side, JOINT_ORDER, (0.0,) * 7, 0.0)
+        self.assertTrue(safety.arm(0.0)[0])
+        self.assertEqual(safety.commands(0.0)["left"][6], 0.0)
+        commands = safety.commands(0.0)
+        self.assertAlmostEqual(commands["left"][6], 0.001)
+        self.assertAlmostEqual(commands["right"][6], 0.001)
+        self.assertIsNone(safety.fault)
 
     def test_excessive_automatic_joint_alignment_is_rejected_atomically(self):
         safety = TeleopSafety(

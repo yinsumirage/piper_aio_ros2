@@ -8,11 +8,11 @@
 
 | 能力 | 当前状态 | 已有证据与边界 |
 |---|---|---|
-| 四路 CAN 稳定绑定 | 旧映射已验证，语义修正待部署 | 四路曾为 1 Mbps、UP 并有真实流；用户运动证明 follower `l/r` 物理反向，仓库 serial 规则已修正，待安装/重启复核 |
-| 四臂 ROS 2 编排 | 真机角色错误已定位 | 四路反馈约 200 Hz；仓库已撤销 ROS 临时补偿并恢复 left→`can_slave_l`、right→`can_slave_r`，待新系统映射生效后回归 |
+| 四路 CAN 稳定绑定 | 语义修正已部署 | 重启后四路目标 serial、稳定接口名、1 Mbps、UP 检查通过；业务角色仍以逐侧运动回归为准 |
+| 四臂 ROS 2 编排 | 映射已修正，待定量回归 | ROS 已恢复 left→`can_slave_l`、right→`can_slave_r`；四路节点和反馈可启动，仍需保存逐侧角色证据 |
 | 真机主从遥操作 | 初版流程已由用户完成 | arm、左右单侧和双侧可运行且动作基本符合；发现 follower 左右反接与 10% 过慢，新的 10% 渐进绝对对齐/100 Hz/80% 同步版本尚未真机回归 |
 | RealSense ROS wrapper | 已安装，未接入设备 | `realsense2_camera_node` 可用；本次 `rs-enumerate-devices -s` 返回没有检测到设备 |
-| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 36 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
+| bag → HDF5 → LeRobot v3 | 合成数据已验证 | 当前 38 个 Python 测试及 8 个 subtest 通过；11-topic file/zstd 合成 bag 可转换；30 帧 HDF5 可导出并回读为 v3.0、三路 640×480 MP4 |
 | 真实完整 episode | **尚未验证** | 还没有同时包含三相机、双主臂、双从臂反馈、双 EEF 和双 command 的真实 bag |
 | 硬件 replay | **未实现，刻意禁用** | 当前 replay 只读 shape；`--execute` 明确拒绝，不创建 publisher |
 
@@ -58,7 +58,7 @@ publisher 失败，不因官方反馈 topic 误报。
 - [x] 输入固定为 `/master_left/joint_states`、`/master_right/joint_states` 和两路 follower feedback；
   输出固定为 `/follower_left/joint_ctrl_cmd`、`/follower_right/joint_ctrl_cmd`。
 - [x] 按 `JointState.name` 把官方主臂 9 维消息转换成 follower 需要的 7 维
-  `joint1..joint6,gripper`；gripper 必须使用 `joint7 - joint8`，不能直接取主臂第 7 个
+  `joint1..joint6,gripper`；gripper 必须使用 `abs(joint7 - joint8)` 形成非负开度，不能直接取主臂第 7 个
   `gripper` 占位值。
 - [x] 明确生成 follower 驱动使用的 `velocity[6]` 速度百分比和 `effort[6]` 夹爪力参数。
   不能原样转发 9 维 master 消息：官方驱动会把第 7 个 position 当夹爪，并可能退回 100%
@@ -81,8 +81,9 @@ publisher 失败，不因官方反馈 topic 误报。
 
 四条物理臂的夹爪存在由用户确认，四处 `gripper_exist` 保持 `true`。2026-08-13 未使能只读窗口
 已确认两路真实 master 都按严格顺序发布 9D `joint1..joint6,gripper,joint7,joint8`，占位
-`gripper=0`，且 `joint7+joint8=0`；当时 `joint7-joint8` 为左 `-0.0003 m`、右 `0.0 m`。
-这确认了当前消息 schema 和映射输入，不等于夹爪完整行程、方向或单位已经做过物理标定。
+`gripper=0`，且 `joint7+joint8=0`；当时原始 `joint7-joint8` 为左 `-0.0003 m`、右 `0.0 m`。
+后续真机运动确认左右原始符号可能不同，因此 position canonical 统一取开度幅值；这不等于夹爪
+完整行程或单位已经做过物理标定。
 
 ## P0：固定三台 RealSense 的物理角色
 
@@ -108,13 +109,15 @@ publisher 失败，不因官方反馈 topic 误报。
   topic/schema/频率、namespace→CAN、两路 9D master 夹爪映射和 unarmed 零 command；未运动。
 - [x] 用户完成初版未使能 arm、左右单侧和双侧运动流程；动作基本符合，但真实运动证明 follower
   已部署 `can_slave_l/r` 标签对应物理左右相反，且 10% 速度跟随过慢。该结果没有保存定量日志。
-- [ ] 安装已修正的 follower serial→稳定名规则并正常重启；只读确认物理左 serial 映射
+- [x] 安装已修正的 follower serial→稳定名规则并正常重启；只读确认物理左 serial 映射
   `can_slave_l`、物理右 serial 映射 `can_slave_r`，四路均为 1 Mbps、UP/ERROR-ACTIVE。
 - [ ] 回归无 ROS 补偿的语义映射：`/follower_left` 使用 `can_slave_l`，`/follower_right` 使用
   `can_slave_r`；逐侧确认 master left/right 不再串到另一只物理 follower。
 - [ ] 回归渐进绝对对齐：主从不必人工预先对齐，未使能 arm 后第一条 command 应等于各侧 follower
   当前反馈，后续目标相对最新反馈不超过配置单步；硬件 enable 后 arm 会让从臂以 10% 逐渐追到
   保持稳定的 master 绝对姿态，不执行机械零位回零。
+- [ ] 回归左右夹爪完整张合：确认 master 原始正负号都归一化为非负开度，闭合至完全张开的
+  `0.07 m` 配置范围可渐进跟随，不再触发虚假的双倍距离 fault；记录实际最大开度后再标定门限。
 - [ ] 以默认 100 Hz/80% 重新做左、右、双侧短时运动，记录 command/state 的方向、延迟、跟踪误差、
   停止行为和 `/actions/executed` 语义；若需继续提高速度，按一次一级的小步重新验收。
 - [ ] 单独验证真实 stale/fault：fault 后 bridge 停发，但仍需人工 disable follower；验证前不得

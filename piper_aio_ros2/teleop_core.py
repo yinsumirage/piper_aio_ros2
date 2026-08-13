@@ -33,13 +33,13 @@ def master_values(names, values):
     if len(names) == len(MASTER_ARM_ORDER):
         return _named_values(names, values, MASTER_ARM_ORDER, "master"), None
     mapped = _named_values(names, values, MASTER_GRIPPER_ORDER, "master")
-    return mapped[:6], mapped[7] - mapped[8]
+    return mapped[:6], abs(mapped[7] - mapped[8])
 
 
 def follower_values(names, values):
     """Map the official 7D follower feedback by name."""
     mapped = _named_values(names, values, JOINT_ORDER, "follower")
-    return mapped[:6], mapped[6]
+    return mapped[:6], abs(mapped[6])
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,7 @@ class TeleopLimits:
     max_joint_abs_rad: float = 3.0
     max_gripper_abs_m: float = 0.07
     max_alignment_joint_error_rad: float = 1.0
-    max_alignment_gripper_error_m: float = 0.05
+    max_alignment_gripper_error_m: float = 0.07
     alignment_joint_step_rad: float = 0.01
     alignment_gripper_step_m: float = 0.001
     max_joint_step_rad: float = 0.05
