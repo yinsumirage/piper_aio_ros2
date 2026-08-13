@@ -16,15 +16,17 @@ class TeleopNode(Node):
         super().__init__("dual_arm_teleop")
         defaults = TeleopLimits()
         for name, value in (
-            ("alignment_mode", defaults.alignment_mode),
             ("publish_hz", defaults.publish_hz),
             ("stale_timeout_sec", defaults.stale_timeout_sec),
             ("max_joint_abs_rad", defaults.max_joint_abs_rad),
             ("max_gripper_abs_m", defaults.max_gripper_abs_m),
-            ("initial_joint_error_rad", defaults.initial_joint_error_rad),
-            ("initial_gripper_error_m", defaults.initial_gripper_error_m),
+            ("max_alignment_joint_error_rad", defaults.max_alignment_joint_error_rad),
+            ("max_alignment_gripper_error_m", defaults.max_alignment_gripper_error_m),
+            ("alignment_joint_step_rad", defaults.alignment_joint_step_rad),
+            ("alignment_gripper_step_m", defaults.alignment_gripper_step_m),
             ("max_joint_step_rad", defaults.max_joint_step_rad),
             ("max_gripper_step_m", defaults.max_gripper_step_m),
+            ("alignment_speed_percent", defaults.alignment_speed_percent),
             ("speed_percent", defaults.speed_percent),
             ("gripper_effort", defaults.gripper_effort),
         ):
@@ -95,14 +97,19 @@ class TeleopNode(Node):
 
     def _publish(self):
         before = self.safety.fault
+        aligning_before = self.safety.aligning
         commands = self.safety.commands(time.monotonic())
         self._report_new_fault(before)
         if commands is None:
             return
+        if self.safety.fault is None and aligning_before and not self.safety.aligning:
+            self.get_logger().info("dual-arm gradual absolute alignment complete")
         stamp = self.get_clock().now().to_msg()
         messages = {}
         for side in SIDES:
-            payload = command_payload(commands[side], self.safety.limits)
+            payload = command_payload(
+                commands[side], self.safety.limits, self.safety.command_speed_percent(side)
+            )
             message = JointState()
             message.header.stamp = stamp
             message.name = list(payload["name"])

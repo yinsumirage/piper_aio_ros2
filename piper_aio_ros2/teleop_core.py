@@ -44,35 +44,39 @@ def follower_values(names, values):
 
 @dataclass(frozen=True)
 class TeleopLimits:
-    alignment_mode: str = "relative"
     publish_hz: float = 30.0
     stale_timeout_sec: float = 0.2
     max_joint_abs_rad: float = 3.0
     max_gripper_abs_m: float = 0.07
-    initial_joint_error_rad: float = 0.10
-    initial_gripper_error_m: float = 0.01
+    max_alignment_joint_error_rad: float = 1.0
+    max_alignment_gripper_error_m: float = 0.05
+    alignment_joint_step_rad: float = 0.01
+    alignment_gripper_step_m: float = 0.001
     max_joint_step_rad: float = 0.05
     max_gripper_step_m: float = 0.005
+    alignment_speed_percent: float = 10.0
     speed_percent: float = 30.0
     gripper_effort: float = 0.5
 
     def __post_init__(self):
-        if self.alignment_mode not in ("absolute", "relative"):
-            raise ValueError("alignment_mode must be absolute or relative")
         positive = (
             self.publish_hz,
             self.stale_timeout_sec,
             self.max_joint_abs_rad,
             self.max_gripper_abs_m,
-            self.initial_joint_error_rad,
-            self.initial_gripper_error_m,
+            self.max_alignment_joint_error_rad,
+            self.max_alignment_gripper_error_m,
+            self.alignment_joint_step_rad,
+            self.alignment_gripper_step_m,
             self.max_joint_step_rad,
             self.max_gripper_step_m,
         )
         if not all(math.isfinite(value) and value > 0.0 for value in positive):
             raise ValueError("teleop limits must be finite and positive")
-        if not math.isfinite(self.speed_percent) or not 1.0 <= self.speed_percent <= 100.0:
-            raise ValueError("speed_percent must be in [1, 100]")
+        for name in ("alignment_speed_percent", "speed_percent"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or not 1.0 <= value <= 100.0:
+                raise ValueError(f"{name} must be in [1, 100]")
         if not math.isfinite(self.gripper_effort) or not 0.5 <= self.gripper_effort <= 3.0:
             raise ValueError("gripper_effort must be in [0.5, 3.0]")
 
@@ -84,17 +88,24 @@ class _Sample:
     received_at: float
 
 
-def command_payload(position, limits):
+def command_payload(position, limits, speed_percent=None):
     """Build the explicit 7D fields consumed by the official follower."""
     position = tuple(float(value) for value in position)
     if len(position) != 7 or not all(math.isfinite(value) for value in position):
         raise ValueError("command position must contain seven finite values")
+    speed = limits.speed_percent if speed_percent is None else float(speed_percent)
+    if not math.isfinite(speed) or not 1.0 <= speed <= 100.0:
+        raise ValueError("command speed_percent must be in [1, 100]")
     return {
         "name": JOINT_ORDER,
         "position": position,
-        "velocity": (0.0,) * 6 + (float(limits.speed_percent),),
+        "velocity": (0.0,) * 6 + (speed,),
         "effort": (0.0,) * 6 + (float(limits.gripper_effort),),
     }
+
+
+def _step_toward(current, target, maximum):
+    return current + max(-maximum, min(maximum, target - current))
 
 
 class TeleopSafety:
@@ -105,13 +116,17 @@ class TeleopSafety:
         self.armed = False
         self.fault = None
         self._samples = {}
-        self._offsets = {}
+        self._aligning = False
+        self._alignment_first = False
+        self._command_speeds = {side: self.limits.speed_percent for side in SIDES}
 
     def _latch(self, reason):
         if self.fault is None:
             self.fault = reason
         self.armed = False
-        self._offsets.clear()
+        self._aligning = False
+        self._alignment_first = False
+        self._command_speeds = {side: self.limits.speed_percent for side in SIDES}
         return False
 
     def _check_side(self, side):
@@ -164,7 +179,17 @@ class TeleopSafety:
         self.armed = False
         self.fault = None
         self._samples.clear()
-        self._offsets.clear()
+        self._aligning = False
+        self._alignment_first = False
+        self._command_speeds = {side: self.limits.speed_percent for side in SIDES}
+
+    @property
+    def aligning(self):
+        return self._aligning
+
+    def command_speed_percent(self, side):
+        self._check_side(side)
+        return self._command_speeds[side]
 
     def _fresh(self, now):
         required = [(source, side) for source in ("master", "follower") for side in SIDES]
@@ -187,29 +212,20 @@ class TeleopSafety:
         if not fresh:
             return False, reason
 
-        offsets = {}
         for side in SIDES:
             master = self._samples[("master", side)]
             follower = self._samples[("follower", side)]
             if master.gripper is None:
                 return False, f"{side}: teleop requires a 9D master input with gripper"
-            master_position = master.joints + (master.gripper,)
-            follower_position = follower.joints + (follower.gripper,)
-            if self.limits.alignment_mode == "absolute":
-                joint_error = max(abs(a - b) for a, b in zip(master.joints, follower.joints))
-                if joint_error > self.limits.initial_joint_error_rad:
-                    return False, f"{side}: initial joint alignment exceeds threshold"
-                if abs(master.gripper - follower.gripper) > self.limits.initial_gripper_error_m:
-                    return False, f"{side}: initial gripper alignment exceeds threshold"
-                offsets[side] = (0.0,) * 7
-            else:
-                offsets[side] = tuple(
-                    follower_value - master_value
-                    for master_value, follower_value in zip(master_position, follower_position)
-                )
-        self._offsets = offsets
+            joint_error = max(abs(a - b) for a, b in zip(master.joints, follower.joints))
+            if joint_error > self.limits.max_alignment_joint_error_rad:
+                return False, f"{side}: automatic joint alignment distance exceeds threshold"
+            if abs(master.gripper - follower.gripper) > self.limits.max_alignment_gripper_error_m:
+                return False, f"{side}: automatic gripper alignment distance exceeds threshold"
+        self._aligning = True
+        self._alignment_first = True
         self.armed = True
-        return True, f"armed ({self.limits.alignment_mode} alignment)"
+        return True, "armed; gradual absolute alignment active"
 
     def commands(self, now):
         if not self.armed or self.fault is not None:
@@ -218,14 +234,60 @@ class TeleopSafety:
         if not fresh:
             return None
         commands = {}
-        for side in SIDES:
-            master = self._samples[("master", side)]
-            position = tuple(
-                value + offset
-                for value, offset in zip(
-                    master.joints + (master.gripper,), self._offsets[side]
-                )
+        speeds = {}
+        samples = {
+            side: (
+                self._samples[("master", side)].joints
+                + (self._samples[("master", side)].gripper,),
+                self._samples[("follower", side)].joints
+                + (self._samples[("follower", side)].gripper,),
             )
+            for side in SIDES
+        }
+        if self._aligning:
+            for side, (master, follower) in samples.items():
+                if any(
+                    abs(target - current) > self.limits.max_alignment_joint_error_rad
+                    for current, target in zip(follower[:6], master[:6])
+                ):
+                    self._latch(f"{side}: automatic joint alignment distance exceeded threshold")
+                    return None
+                if (
+                    abs(master[6] - follower[6])
+                    > self.limits.max_alignment_gripper_error_m
+                ):
+                    self._latch(f"{side}: automatic gripper alignment distance exceeded threshold")
+                    return None
+        alignment_complete = self._aligning and not self._alignment_first and all(
+            all(
+                abs(target - current) <= self.limits.alignment_joint_step_rad
+                for current, target in zip(follower[:6], master[:6])
+            )
+            and abs(master[6] - follower[6]) <= self.limits.alignment_gripper_step_m
+            for master, follower in samples.values()
+        )
+        for side in SIDES:
+            master_position, follower_position = samples[side]
+            if self._aligning:
+                speeds[side] = self.limits.alignment_speed_percent
+                if self._alignment_first:
+                    position = follower_position
+                elif alignment_complete:
+                    position = master_position
+                else:
+                    position = tuple(
+                        _step_toward(current, target, self.limits.alignment_joint_step_rad)
+                        for current, target in zip(follower_position[:6], master_position[:6])
+                    ) + (
+                        _step_toward(
+                            follower_position[6],
+                            master_position[6],
+                            self.limits.alignment_gripper_step_m,
+                        ),
+                    )
+            else:
+                speeds[side] = self.limits.speed_percent
+                position = master_position
             if any(abs(value) > self.limits.max_joint_abs_rad for value in position[:6]):
                 self._latch(f"command_{side}: joint absolute safety limit exceeded")
                 return None
@@ -233,4 +295,8 @@ class TeleopSafety:
                 self._latch(f"command_{side}: gripper absolute safety limit exceeded")
                 return None
             commands[side] = position
+        self._alignment_first = False
+        if alignment_complete:
+            self._aligning = False
+        self._command_speeds = speeds
         return commands

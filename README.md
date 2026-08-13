@@ -7,8 +7,9 @@
 三个官方仓库必须保持干净，本仓库不回写它们。
 
 截至 2026-08-13，四路稳定 CAN 接口、真实反馈和初版双臂 teleop 已完成分阶段现场运行；用户
-报告跟随基本正常，同时发现 follower 已部署左右标签反向和 10% 速度过慢。当前已在 ROS 层交换
-follower 角色，并把默认 teleop 改为 relative 软件零位和 30% 速度；这些新改动尚待真机回归。
+报告跟随基本正常，同时发现 follower 已部署左右标签反向和 10% 速度过慢。仓库现已按物理左右
+交换 follower serial→稳定名并撤销 ROS 层临时补偿；系统 `/etc`/实时接口仍待安装新规则并重启。
+默认 teleop 已改为 10% 渐进绝对对齐、对齐后 30% 同步，这些新改动尚待真机回归。
 相机、EEF 语义和完整 episode 尚未验证。可审计边界见
 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
 
@@ -84,31 +85,39 @@ ros2 launch piper_aio_ros2 collect.launch.py config:=/absolute/path/topics.yaml
 2026-08-13 先通过 sysfs/udev 属性链识别四个 `gs_usb` 设备，随后完成系统部署验证：
 稳定接口名、1 Mbps bitrate 和 UP 状态均与配置一致。
 
-| 实机角色 | USB serial | 审计时接口 | 已部署稳定接口 |
+| 实机角色 | USB serial | 审计时接口 | 目标稳定接口 |
 |---|---|---|---|
-| 从右 | `002300374148570D20343133` | `can0` | `can_slave_l` |
-| 从左 | `003400204148570A20343133` | `can1` | `can_slave_r` |
+| 从右 | `002300374148570D20343133` | `can0` | `can_slave_r` |
+| 从左 | `003400204148570A20343133` | `can1` | `can_slave_l` |
 | 主左 | `004400314148570C20343133` | `can2` | `can_master_l` |
 | 主右 | `003B00234148570A20343133` | `can3` | `can_master_r` |
 
-两路 follower 的已部署接口名来自运动前的初始角色判断；2026-08-13 首次真实遥操作发现其
-物理左右相反。为避免修改 `/etc`/udev 和重新激活 CAN，`config/four_arm.yaml` 在 ROS 角色层
-补偿交换：物理左使用 `can_slave_r`，物理右使用 `can_slave_l`。`deploy/piper-can.conf` 仍是
-serial、已部署稳定接口名和 `BITRATE=1000000` 的事实源，但接口名中的 `l/r` 不能再直接当作
-物理 follower 角色。若以后停机重部署语义接口名，必须同时撤销 ROS 层补偿，避免双重翻转。
+两路 follower 的初次部署接口名来自运动前的角色判断；首次真实遥操作证明物理左右相反。
+`deploy/piper-can.conf` 现已按物理角色修正为 serial、语义稳定接口名和 `BITRATE=1000000` 的
+唯一事实源；`config/four_arm.yaml` 同步撤销临时补偿，left/right 再分别使用
+`can_slave_l/r`，避免双重翻转。
 先做无特权 dry-run：
 
 ```bash
 cd /home/engram/project/piper/piper_aio_ros2
-./deploy/install_can.sh --dry-run --activate --enable-service
+./deploy/install_can.sh --dry-run
 ./scripts/can_status.sh
 ```
 
-安装前 `can_status.sh` 会准确显示当前 `can0..can3`，并因稳定名/bitrate/state 未就绪返回
-非零。`colcon build` 只把 ROS launch/config 安装进工作区；它不会写 `/etc`、reload
-udev、重命名或拉起 CAN，也不会安装/启用 systemd unit。
+当前主机在重启前仍运行旧的两路 follower 名称，`can_status.sh` 应返回非零；这是待部署状态，
+不是脚本故障。`colcon build` 只把 ROS launch/config 安装进工作区；它不会写 `/etc`、reload
+udev、重命名或拉起 CAN，也不会安装/启用 systemd unit。完成重启后的 serial/状态只读复核前，
+不要启动 `four_arm.launch.py` 或 teleop。
 
-由用户选择停机窗口后，唯一需要的 sudo 安装命令是：
+本次现有两路 UP 接口的同名循环交换不在线强改。先安装新 conf/udev 规则但不传
+`--activate`，再由一次正常重启让 udev 按 serial 重新命名；现有 service 已 enabled：
+
+```bash
+sudo ./deploy/install_can.sh
+sudo reboot
+```
+
+全新部署或没有同名循环的主机，才可在停机窗口使用：
 
 ```bash
 sudo ./deploy/install_can.sh --activate --enable-service
@@ -160,8 +169,8 @@ ros2 launch piper_aio_ros2 four_arm.launch.py --show-args
 |---|---|---|---|---|
 | `/master_left` | `piper_read` | `can_master_l` | `joint_states` | 无 |
 | `/master_right` | `piper_read` | `can_master_r` | `joint_states` | 无 |
-| `/follower_left` | `piper_ctrl` | `can_slave_r` | `joint_states_feedback`, `end_pose`, `end_pose_stamped` | `joint_ctrl_cmd`, `pos_cmd`, `enable_flag`, `enable_srv` |
-| `/follower_right` | `piper_ctrl` | `can_slave_l` | `joint_states_feedback`, `end_pose`, `end_pose_stamped` | `joint_ctrl_cmd`, `pos_cmd`, `enable_flag`, `enable_srv` |
+| `/follower_left` | `piper_ctrl` | `can_slave_l` | `joint_states_feedback`, `end_pose`, `end_pose_stamped` | `joint_ctrl_cmd`, `pos_cmd`, `enable_flag`, `enable_srv` |
+| `/follower_right` | `piper_ctrl` | `can_slave_r` | `joint_states_feedback`, `end_pose`, `end_pose_stamped` | `joint_ctrl_cmd`, `pos_cmd`, `enable_flag`, `enable_srv` |
 
 官方控制节点的实际关节命令订阅名是 `joint_ctrl_single`；launch 只把它 remap 为稳定外部
 名 `joint_ctrl_cmd`。`joint_states_feedback`、`end_pose`、`end_pose_stamped` 均为官方实际相对
@@ -170,17 +179,21 @@ topic，不做多余 remap。namespace 保证四臂 topic/service 不冲突。te
 `config/topics.yaml` 仅把采集器的 arm
 输入改到上述 namespaced feedback，相机 topic 未改。
 
-## 安全双臂 teleop（初版已真机运行，当前 relative 更新待复测）
+## 安全双臂 teleop（初版已真机运行，当前渐进绝对对齐待复测）
 
 `teleop.launch.py` 单独启动 `/dual_arm_teleop`。节点默认且固定从 unarmed 开始，不调用
 `/follower_*/enable_srv`，也不修改 `auto_enable: false`。两侧共同 arming：缺任一 master 或
 follower、输入不新鲜、名称/维度/finite 检查失败或任一输入越界时，整体拒绝。
 
-默认 `alignment_mode: relative` 会在 arm 瞬间分别记录左右两侧
-`follower_position-master_position`，所以第一条 command 等于各自 follower 的当前反馈，既不要求
-四臂事先摆成同一绝对角度，也不会自动回零或在 arm 时跳向 master。随后只跟随 master 相对
-arm 时刻的增量。若明确需要绝对同姿态，可配置 `alignment_mode: absolute`；这时仍使用
-`initial_joint_error_rad` 和 `initial_gripper_error_m` 拒绝未对齐输入。
+显式 arm 后使用绝对姿态，不保留 relative 偏置，也不会让四条臂自动回机械零位。第一条 command
+严格等于各自 follower 的最新反馈；随后每个发布周期都从最新 follower 反馈向实时 master 目标最多
+移动 `alignment_joint_step_rad` 和 `alignment_gripper_step_m`，并显式使用
+`alignment_speed_percent: 10`。操作者必须在此阶段保持两条 master 稳定。只有左右两侧都到达目标，
+bridge 才整体切换为 30% 的直接绝对同步，避免半套系统提前进入正常跟随。
+
+arm 前以及对齐过程中，任一侧主从关节或夹爪距离超过
+`max_alignment_joint_error_rad` / `max_alignment_gripper_error_m` 都会拒绝或锁存 fault。默认
+`1.0 rad`、`0.05 m` 只是待真机标定的软件安全门限，不是自动规划能力或 Piper 物理极限。
 
 官方 reader 源码在 `gripper_exist: true` 时构造 9D
 `joint1..joint6,gripper,joint7,joint8`；其中 `gripper` 为占位，bridge 用
@@ -190,13 +203,13 @@ arm 时刻的增量。若明确需要绝对同姿态，可配置 `alignment_mode
 这只确认当前消息输入，夹爪物理方向、零点、单位与完整行程仍待现场扰动标定。映射器能严格
 解析 6D reader 输出用于兼容诊断，但 teleop arming 必须有 9D 夹爪输入，绝不会给第 7 维补零。
 
-command 显式填写 `velocity[6]=speed_percent` 和 `effort[6]=gripper_effort`，默认速度百分比在首轮
-10% 实机体验后提高为 30%，且不触发官方节点的
-100% 速度回退。任一侧 stale、非有限、绝对值越界、schema 改变或单步跳变会停止后续双侧发布并
+command 显式填写 `velocity[6]` 和 `effort[6]=gripper_effort`：渐进对齐阶段为 10%，对齐完成后的
+正常同步为 30%，且不触发官方节点的 100% 速度回退。任一侧 stale、非有限、绝对值越界、schema
+改变或单步跳变会停止后续双侧发布并
 锁存 fault；必须显式 disarm（同时清空旧输入）后，重新收到四路新鲜数据才能再次 arm。
 `config/teleop.yaml` 的默认阈值只是保守的软件门禁，不是 Piper 物理极限，必须在真机阶段标定。
 
-以下是真机分阶段操作顺序。初版绝对映射已由用户完成全流程；当前 relative/30%/左右补偿版本
+以下是真机分阶段操作顺序。初版绝对映射已由用户完成全流程；当前渐进对齐/30%/左右修正版本
 仍应从未使能检查重新逐级验证：
 
 ```bash
@@ -206,7 +219,7 @@ ros2 launch piper_aio_ros2 four_arm.launch.py
 # 2. 另一个终端单独启动 bridge；此时不会发布 command
 ros2 launch piper_aio_ros2 teleop.launch.py
 
-# 3. 四路输入新鲜后显式 arm；relative 模式在此刻捕获各侧软件零位
+# 3. 四路输入新鲜、主臂保持不动后显式 arm；硬件已 enable 时从臂会立即开始 10% 渐进对齐
 ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: true}"
 
 # 4. 正常停止或 fault 后都先显式 disarm
@@ -215,10 +228,10 @@ ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: false}"
 
 硬件 enable/disable 是上述 bridge arming 之外的独立人工操作，bridge 永不代办。第一次真机验收
 必须逐阶段重新授权：清空从臂工作区并保证急停可触达；硬件未使能时先核对四路 name/单位/夹爪
-和 unarmed 零 command；仍未使能时短暂 arm 检查第一条 command 等于 follower 当前反馈、两路
-7D command、30% 速度字段和夹爪 effort，
-随即 disarm；然后依次仅使能左侧、仅使能右侧做单关节与夹爪小幅动作；两侧分别通过后才做双侧
-低速短时测试。任何左右串线、方向/单位错误、未 arm 出现 command、超阈值、跟踪突变、stale
+和 unarmed 零 command；仍未使能时短暂 arm 检查第一条 command 等于 follower 当前反馈、后续目标
+相对最新反馈不超过单步门限、两路 7D command、10% 速度字段和夹爪 effort，随即 disarm。硬件
+enable 后再次 arm 就会开始真实对齐运动，应让 master 保持稳定；日志报告双侧对齐完成后才允许
+做 30% 小幅跟随。任何左右串线、方向/单位错误、未 arm 出现 command、超阈值、跟踪突变、stale
 未停发、disarm 失败或异常 enable 都立即停止，disarm bridge 并由人工独立 disable 硬件。
 
 ## RealSense 当前边界
@@ -302,8 +315,8 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
   13 个查询 TX，停止后 TX 不再增长；没有 enable 或运动机械臂。
 - 初版绝对映射 teleop 的纯逻辑、隔离 ROS、真实 unarmed 零 command 已验证；用户随后现场完成
   arm、左右单侧及双侧 enable/运动流程并报告动作方向符合，但同时发现两路 follower 物理角色
-  反接、10% 跟随过慢。当前 ROS 角色补偿、relative 软件零位和 30% 默认速度已经代码化，仍需
-  再次真机回归；这不是长时间稳定性或完整物理安全认证。
+  反接、10% 跟随过慢。仓库的 serial 语义修正、ROS 补偿撤销、10% 渐进绝对对齐和对齐后 30%
+  同步已经代码化；系统映射重启生效后仍需再次真机回归。这不是长时间稳定性或完整物理安全认证。
 - 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改
   相机启动逻辑。
 

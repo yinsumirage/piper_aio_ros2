@@ -25,7 +25,12 @@ def main():
     executor.add_node(probe)
     counts = {"left": 0, "right": 0}
     messages = {}
+    history = {"left": [], "right": []}
     publishers = {}
+    follower_positions = {
+        "left": [0.0] * 7,
+        "right": [0.0] * 7,
+    }
     for side in ("left", "right"):
         publishers[("master", side)] = probe.create_publisher(
             JointState, f"/master_{side}/joint_states", 1
@@ -37,17 +42,19 @@ def main():
         def receive(message, side=side):
             counts[side] += 1
             messages[side] = message
+            history[side].append((tuple(message.position), message.velocity[6]))
+            follower_positions[side][:] = message.position
 
         probe.create_subscription(JointState, f"/follower_{side}/joint_ctrl_cmd", receive, 10)
     client = probe.create_client(SetBool, "/dual_arm_teleop/arm")
 
     master_positions = {
-        "left": [0.10] + [0.0] * 6 + [0.01, -0.01],
-        "right": [-0.10] + [0.0] * 6 + [0.01, -0.01],
+        "left": [0.03] + [0.0] * 6 + [0.002, -0.002],
+        "right": [-0.02] + [0.0] * 6 + [0.002, -0.002],
     }
-    follower_positions = {
-        "left": [-0.20] + [0.0] * 5 + [0.03],
-        "right": [0.20] + [0.0] * 5 + [0.04],
+    expected_targets = {
+        side: tuple(position[:6] + [position[7] - position[8]])
+        for side, position in master_positions.items()
     }
 
     def publish_inputs():
@@ -81,17 +88,20 @@ def main():
             executor.spin_once(timeout_sec=0.01)
         assert future.done() and future.result().success, future.result()
 
-        spin_for(0.3, publish=True)
+        spin_for(0.5, publish=True)
         assert counts["left"] > 0 and counts["right"] > 0, counts
         for side, message in messages.items():
             assert tuple(message.name) == JOINT_ORDER
             assert len(message.position) == 7
             assert all(
                 abs(actual - expected) < 1e-12
-                for actual, expected in zip(message.position, follower_positions[side])
+                for actual, expected in zip(message.position, expected_targets[side])
             )
             assert message.velocity[6] == 30.0
             assert message.effort[6] == 0.5
+            assert history[side][0] == ((0.0,) * 7, 10.0)
+            assert any(speed == 10.0 for _, speed in history[side])
+        assert not bridge.safety.aligning
 
         spin_for(0.35)
         frozen = dict(counts)
@@ -108,8 +118,8 @@ def main():
         assert future.done() and future.result().success
         assert bridge.safety.fault is None
         print(
-            "PASS: unarmed=0, relative arm=no jump, bounded dual 7D, "
-            "stale=stopped, disarm=cleared"
+            "PASS: unarmed=0, gradual absolute alignment=bounded 10%, "
+            "dual sync=30%, stale=stopped, disarm=cleared"
         )
     finally:
         executor.remove_node(probe)

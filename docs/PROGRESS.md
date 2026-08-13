@@ -16,20 +16,21 @@
 
 ## 已验证
 
-- CAN 系统部署已完成验证：四个 `gs_usb` 设备按 USB serial 映射为 `can_slave_l`、
-  `can_slave_r`、`can_master_l`、`can_master_r`，均为 1 Mbps、UP；
-  `scripts/can_status.sh` 返回成功。
+- 初次 CAN 系统部署曾验证四个 `gs_usb` 稳定名均为 1 Mbps、UP，
+  `scripts/can_status.sh` 返回成功；后续真实运动证明当时两路 follower 的 `l/r` 名称与物理角色
+  相反。该结果证明网络部署可用，不证明初始 follower 角色判断正确。
 - 在带 timeout 的被动监听中，四个接口都观察到真实 CAN 流。这个结果只证明总线上有真实帧，
   不证明四路 ROS 解码、topic 语义或机械臂动作正确。
 - 对 `can_master_l` 做过一次受控 ROS 读取检查：`JointState` 收到 30 帧，观测频率约
   200 Hz。该结果不外推到其余三路。
 - 官方 `piper_read_slave_joint` 初始化期间观察到 13 个查询帧。它们不是运动帧或使能帧，
   检查中没有使能或运动机械臂；但这是非零 TX，因此该节点不能称为严格被动监听。
-- 当前代码的 38 个 Python 测试（另含 8 个 subtest）通过；teleop 覆盖严格 9D 名称映射、
-  `joint7-joint8` 夹爪、双侧原子 arming、relative 无跳变、absolute 初始对齐、command 限位、
-  step、stale 和 fault latch。
-- 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command，显式 arm 后两路均
-  收到有界 7D command，停止输入后 stale 锁存并停发，退出无残留进程。
+- 当前代码的 36 个 Python 测试（另含 8 个 subtest）通过；teleop 覆盖严格 9D 名称映射、
+  `joint7-joint8` 夹爪、双侧原子 arming、渐进绝对对齐、双侧同时切换、command 限位、step、stale
+  和 fault latch。
+- 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command；显式 arm 后第一帧
+  保持各侧 follower 反馈，随后以 10% 有界渐进对齐，两侧一起切到 30% 绝对同步；停止输入后
+  stale 锁存并停发，退出无残留进程。
 - 另一隔离 ROS 图以 11 个白名单 publisher 加两条官方 `/follower_*/joint_ctrl` 反馈运行真实
   `bag_preflight`，检查成功且没有 unexpected control publisher；退出无残留进程。
 - `colcon build --symlink-install` 和现有 `colcon test` 命令成功，teleop/four-arm launch 参数解析
@@ -60,8 +61,9 @@
 
 ## 已停止或未继续
 
-- 初版真机运动已经暴露 follower 物理左右与已部署接口标签相反；当前在 ROS 参数层交换
-  follower CAN，未修改 `/etc`/udev。这个补偿以及新的 relative 软件零位、30% 默认速度仍需
+- 初版真机运动已经暴露 follower 物理左右与已部署接口标签相反。仓库现已交换两路 follower
+  serial→稳定名，并让 ROS left/right 恢复使用语义 `can_slave_l/r`；当前 `/etc` 和实时接口仍是
+  旧映射，待安装新规则并重启。修正后的映射以及新的渐进绝对对齐、30% 正常速度仍需
   再次真机回归，不能由初版动作结果替代。
 - master 夹爪映射和 follower 运动方向得到现场正向反馈，但夹爪完整行程、逐轴定量跟踪误差、
   stale/fault 的真实运动行为和长时间稳定性仍未留存可审计证据。
@@ -80,8 +82,8 @@
 - teleop 的隔离 ROS command 只证明桥接器发布合同和安全门禁，不证明驱动消费、硬件 enable、
   方向/单位、夹爪行程、跟踪精度、电机 ACK 或真实运动安全。
 - 本轮静态样本下，左侧最大主从关节误差约 `0.145 rad`（joint4），右侧约 `0.112 rad`
-  （joint6），均超过 `0.10 rad` 初始对齐门限；它会继续阻止可选的 `absolute` 模式。默认
-  `relative` 模式在 arm 时捕获 follower-master 偏置，第一条 command 保持 follower 当前姿态，
-  因此不要求四臂人工绝对对齐，也不执行物理回零。
+  （joint6）。当前实现不再要求人工把四臂摆到同一姿态：显式 arm 后第一条 command 保持 follower
+  当前姿态，再从最新反馈以 10% 和有界单步渐进追到 live master，双侧到位后才切到 30% 同步。
+  默认最大自动对齐距离 `1.0 rad` / `0.05 m` 尚未真机标定，也不执行机械零位回零。
 - 用户现场报告能证明初版流程在当时可运行并发现左右错误，但没有机器生成的 command/state
   日志，不能据此给出定量同步精度、最大安全速度或“没有危险”的一般性结论。
