@@ -25,7 +25,7 @@
   200 Hz。该结果不外推到其余三路。
 - 官方 `piper_read_slave_joint` 初始化期间观察到 13 个查询帧。它们不是运动帧或使能帧，
   检查中没有使能或运动机械臂；但这是非零 TX，因此该节点不能称为严格被动监听。
-- 当前代码的 41 个 Python 测试（另含 8 个 subtest）及 tmux/control shell 测试通过；teleop 覆盖严格 9D 名称映射、
+- 当前代码的 42 个 Python 测试（另含 8 个 subtest）及 tmux/control shell 测试通过；teleop 覆盖严格 9D 名称映射、
   `abs(joint7-joint8)` 夹爪开度、双侧原子 arming、首帧保持、冻结 master 目标、settle、超时、双侧同时切换、command 限位、step、stale
   和 fault latch。
 - 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command；显式 arm 后第一帧
@@ -78,7 +78,16 @@
   `gripper_effort: 1.0`；该版本仅完成离线/隔离 ROS 验证，尚未真机复测。
 - 当前代码进一步把 alignment 与 live follow 严格分开：arm 时冻结 master，master 漂移会 fault，双侧
   进入容差并稳定 `0.3 s` 后才切换，`15 s` 超时和每秒状态日志报告两侧残差。新增 tmux 三窗格与
-  显式 control 脚本；启动器默认不 enable、不 arm。以上只完成代码和隔离测试，未用脚本启动真机。
+  显式 control 脚本；启动器默认不 enable、不 arm。
+- 用户随后用 tmux/control 脚本完成一次真实双侧 enable 和 arm：两侧 enable service 均返回成功，
+  alignment 从日志可见的第 `1.0 s` 到 `14.1 s` 始终停在左 `0.0315 rad`、右 `0.0376 rad`，
+  夹爪分别为 `0.0004 m`、`0.0002 m`；由于关节完成门限仍为 `0.02 rad`，最终在 `15 s` 按设计
+  fault。随后 `stop` 成功 disarm 并 disable 两侧。现有旧日志从第 1 秒才开始记录，无法区分
+  “第一个 1 秒内已运动到静态残差”与“控制链未实际执行目标”，不能把这次写成已完成对齐。
+- 代码现增加 alignment 首帧完整 target/feedback、前 1 秒每 `0.1 s` 最大误差关节、后续每秒误差、
+  command publish cycle 以及官方 `/follower_*/joint_ctrl` controller echo 误差。controller echo 仅是
+  控制桥接器/CAN 命令回显，不是电机 ACK。新增诊断已通过 42 个 pytest、colcon 21 项测试和隔离
+  ROS synthetic smoke，尚待下一次真机 arm 留存日志；在证据出来前不放宽 `0.02 rad` 门限。
 - 相机未完成 serial 绑定和图像 topic 验证。
 - EEF 坐标系、四元数到 RPY 约定和跨设备时间同步未验证。两路 master 的 9D name/当前值已
   观测，但夹爪单位、方向、零点与完整行程仍未通过现场物理扰动标定。

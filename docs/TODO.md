@@ -142,6 +142,12 @@ publisher 失败，不因官方反馈 topic 误报。
 - [ ] 两侧方向均通过后才同时 enable 两侧并 arm；观察每秒剩余误差和
   `dual-arm alignment complete; live follow active` 日志，再从小幅单关节开始确认 100 Hz/100% 同步，并按
   disarm→disable 顺序结束。
+- [ ] 下一次双侧 arm 保存 TELEOP 窗格从 `alignment start` 到 complete/timeout 的完整日志。重点比较
+  前 `1 s` 每 `0.1 s` 的 `publish_cycles`、最大误差关节、target/feedback，以及
+  `controller_echo_*_error`：echo 接近目标但 feedback 不变才支持“硬件静态残差”；echo 不接近目标则先查
+  enable/官方控制链。`/follower_*/joint_ctrl` 是命令回显，不是电机 ACK。
+- [ ] 只有上述真机日志确认两侧确实收敛到约 `0.03--0.04 rad` 的稳定残差后，才评估把
+  `alignment_joint_tolerance_rad` 从 `0.02` 标定到 `0.05`；不能仅因超时直接放宽安全门限。
 - [ ] 保存 command/follower state 的短时 bag 或文本统计，至少记录跟踪方向、峰值误差、主观延迟、
   fault/停止行为；结束后检查无残留进程。
 

@@ -222,6 +222,37 @@ class TeleopSafetyTest(unittest.TestCase):
         self.assertIn("left joint=", safety.fault)
         self.assertIn("right joint=", safety.fault)
 
+    def test_alignment_report_identifies_max_joint_and_positions(self):
+        safety = TeleopSafety(TeleopLimits(stale_timeout_sec=1.0))
+        targets = {
+            "left": (0.01, 0.02, 0.30, 0.04, 0.05, 0.06),
+            "right": (-0.01, -0.25, -0.03, -0.04, -0.05, -0.06),
+        }
+        feedback = {
+            "left": (0.01, 0.02, 0.10, 0.04, 0.05, 0.06),
+            "right": (-0.01, -0.05, -0.03, -0.04, -0.05, -0.06),
+        }
+        for side in ("left", "right"):
+            safety.update_master(
+                side,
+                MASTER_GRIPPER_ORDER,
+                targets[side] + (0.0, 0.01, -0.01),
+                0.0,
+            )
+            safety.update_follower(
+                side, JOINT_ORDER, feedback[side] + (0.01,), 0.0
+            )
+        self.assertTrue(safety.arm(0.0)[0])
+
+        elapsed, report = safety.alignment_report(0.1)
+        self.assertAlmostEqual(elapsed, 0.1)
+        self.assertEqual(report["left"][0], 3)
+        self.assertAlmostEqual(report["left"][1], 0.2)
+        self.assertEqual(report["left"][3], targets["left"] + (0.02,))
+        self.assertEqual(report["left"][4], feedback["left"] + (0.01,))
+        self.assertEqual(report["right"][0], 2)
+        self.assertAlmostEqual(report["right"][1], 0.2)
+
     def test_teleop_requires_nine_dimensional_master_input(self):
         safety = TeleopSafety()
         seed(safety, nine_dimensional=False)

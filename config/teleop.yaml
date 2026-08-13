@@ -5,7 +5,7 @@
     stale_timeout_sec: 0.2
     max_joint_abs_rad: 3.0
     max_gripper_abs_m: 0.08
-    # Explicit arm holds feedback once, then sends the live master pose.
+    # Explicit arm holds feedback once, then sends the frozen master pose.
     # These gates bound the automatic joint-space alignment path.
     max_alignment_joint_error_rad: 1.0
     # Full official 80 mm opening mismatch is allowed to align.
@@ -28,3 +28,6 @@
     topics.follower_right: /follower_right/joint_states_feedback
     topics.command_left: /follower_left/joint_ctrl_cmd
     topics.command_right: /follower_right/joint_ctrl_cmd
+    # Controller command echoes used only for diagnostics; they are not motor ACKs.
+    topics.controller_echo_left: /follower_left/joint_ctrl
+    topics.controller_echo_right: /follower_right/joint_ctrl

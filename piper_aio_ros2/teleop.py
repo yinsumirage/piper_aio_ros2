@@ -8,7 +8,13 @@ from rclpy.qos import QoSProfile
 from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
 
-from .teleop_core import SIDES, TeleopLimits, TeleopSafety, command_payload
+from .teleop_core import (
+    SIDES,
+    TeleopLimits,
+    TeleopSafety,
+    command_payload,
+    follower_values,
+)
 
 
 class TeleopNode(Node):
@@ -48,6 +54,8 @@ class TeleopNode(Node):
             "follower_right": "/follower_right/joint_states_feedback",
             "command_left": "/follower_left/joint_ctrl_cmd",
             "command_right": "/follower_right/joint_ctrl_cmd",
+            "controller_echo_left": "/follower_left/joint_ctrl",
+            "controller_echo_right": "/follower_right/joint_ctrl",
         }
         for name, value in topic_defaults.items():
             self.declare_parameter("topics." + name, value)
@@ -60,6 +68,8 @@ class TeleopNode(Node):
         self.safety = TeleopSafety(limits)
         self._last_reported_fault = None
         self._last_alignment_report_at = None
+        self._alignment_publish_cycles = 0
+        self._controller_echoes = {}
         qos = QoSProfile(depth=1)
         self._command_publishers = {
             side: self.create_publisher(
@@ -80,6 +90,12 @@ class TeleopNode(Node):
                 lambda message, side=side: self._input("follower", side, message),
                 qos,
             )
+            self.create_subscription(
+                JointState,
+                self.get_parameter("topics.controller_echo_" + side).value,
+                lambda message, side=side: self._controller_echo(side, message),
+                qos,
+            )
         self.create_service(SetBool, "~/arm", self._set_armed)
         self.create_timer(1.0 / limits.publish_hz, self._publish)
         self.get_logger().info("teleop started unarmed; no enable service is called")
@@ -96,16 +112,46 @@ class TeleopNode(Node):
             self.get_logger().error("teleop fault latched; publishing stopped: " + fault)
             self._last_reported_fault = fault
 
+    def _controller_echo(self, side, message):
+        try:
+            joints, gripper = follower_values(message.name, message.position)
+        except (TypeError, ValueError):
+            return
+        self._controller_echoes[side] = (joints + (gripper,), time.monotonic())
+
+    def _controller_echo_detail(self, side, target, now):
+        sample = self._controller_echoes.get(side)
+        if sample is None or now - sample[1] > self.safety.limits.stale_timeout_sec:
+            return "controller_echo=missing"
+        echo = sample[0]
+        errors = [abs(actual - desired) for actual, desired in zip(echo, target)]
+        joint_index = max(range(6), key=errors.__getitem__)
+        return (
+            f"controller_echo_joint{joint_index + 1}_error={errors[joint_index]:.4f} rad "
+            f"controller_echo_gripper_error={errors[6]:.4f} m"
+        )
+
     def _set_armed(self, request, response):
         if request.data:
             now = time.monotonic()
             response.success, response.message = self.safety.arm(now)
             if response.success:
                 self._last_alignment_report_at = now
+                self._alignment_publish_cycles = 0
+                self._controller_echoes.clear()
+                _, report = self.safety.alignment_report(now)
+                detail = "; ".join(
+                    f"{side} target={[round(value, 6) for value in target]} "
+                    f"feedback={[round(value, 6) for value in feedback]}"
+                    for side, (_, _, _, target, feedback) in report.items()
+                )
+                self.get_logger().info("alignment start: " + detail)
         else:
             self.safety.disarm()
             self._last_reported_fault = None
             self._last_alignment_report_at = None
+            self._alignment_publish_cycles = 0
+            self._controller_echoes.clear()
             response.success, response.message = True, "disarmed; fault and cached inputs cleared"
         self.get_logger().info(response.message)
         return response
@@ -118,17 +164,31 @@ class TeleopNode(Node):
         self._report_new_fault(before)
         if commands is None:
             return
-        if (
-            self.safety.aligning
-            and self._last_alignment_report_at is not None
-            and now - self._last_alignment_report_at >= 1.0
-        ):
-            elapsed, errors = self.safety.alignment_status(now)
+        report = self.safety.alignment_report(now)
+        if report is not None and self._last_alignment_report_at is not None:
+            elapsed, sides = report
+            interval = 0.1 if elapsed < 1.0 else 1.0
+        else:
+            interval = None
+        if interval is not None and now - self._last_alignment_report_at >= interval:
             detail = "; ".join(
-                f"{side} joint={joint:.4f} rad gripper={gripper:.4f} m"
-                for side, (joint, gripper) in errors.items()
+                f"{side} joint{joint_index}={joint_error:.4f} rad "
+                f"(target={target[joint_index - 1]:.4f} "
+                f"feedback={feedback[joint_index - 1]:.4f}) "
+                f"gripper={gripper_error:.4f} m "
+                f"{self._controller_echo_detail(side, target, now)}"
+                for side, (
+                    joint_index,
+                    joint_error,
+                    gripper_error,
+                    target,
+                    feedback,
+                ) in sides.items()
             )
-            self.get_logger().info(f"alignment {elapsed:.1f}s: {detail}")
+            self.get_logger().info(
+                f"alignment {elapsed:.1f}s publish_cycles={self._alignment_publish_cycles}: "
+                + detail
+            )
             self._last_alignment_report_at = now
         if self.safety.fault is None and aligning_before and not self.safety.aligning:
             self.get_logger().info("dual-arm alignment complete; live follow active")
@@ -148,6 +208,8 @@ class TeleopNode(Node):
             messages[side] = message
         for side in SIDES:
             self._command_publishers[side].publish(messages[side])
+        if self.safety.aligning:
+            self._alignment_publish_cycles += 1
 
 
 def main(args=None):

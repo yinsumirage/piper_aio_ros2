@@ -212,18 +212,37 @@ class TeleopSafety:
         self._check_side(side)
         return self._command_speeds[side]
 
-    def alignment_status(self, now):
+    def alignment_report(self, now):
         if not self._aligning:
             return None
-        errors = {}
+        report = {}
         for side in SIDES:
             follower = self._samples[("follower", side)]
             target = self._alignment_targets[side]
-            errors[side] = (
-                max(abs(a - b) for a, b in zip(follower.joints, target[:6])),
-                abs(follower.gripper - target[6]),
+            feedback = follower.joints + (follower.gripper,)
+            joint_errors = tuple(
+                abs(actual - desired)
+                for actual, desired in zip(feedback[:6], target[:6])
             )
-        return now - self._alignment_started_at, errors
+            max_index = max(range(6), key=joint_errors.__getitem__)
+            report[side] = (
+                max_index + 1,
+                joint_errors[max_index],
+                abs(feedback[6] - target[6]),
+                target,
+                feedback,
+            )
+        return now - self._alignment_started_at, report
+
+    def alignment_status(self, now):
+        result = self.alignment_report(now)
+        if result is None:
+            return None
+        elapsed, report = result
+        return elapsed, {
+            side: (joint_error, gripper_error)
+            for side, (_, joint_error, gripper_error, _, _) in report.items()
+        }
 
     def _fresh(self, now):
         required = [(source, side) for source in ("master", "follower") for side in SIDES]
