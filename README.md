@@ -82,6 +82,25 @@ ros2 launch piper_aio_ros2 collect.launch.py config:=/absolute/path/topics.yaml
 
 这两个命令只描述用法；构建或安装本包不会启动节点。
 
+## rosbag 录制模式
+
+整体录制与相机诊断属于同一个 package、同一套 preflight/reader，不是两个 ROS 仓库：
+
+```bash
+# 默认整体录制：config/record_topics.yaml 中的 11 路 topic，包含三路 RGB
+./scripts/record_bag.sh /home/engram/data/piper/episode_000
+
+# 相机-only 诊断案例：严格检查 serial/图像合同，录完自动读回
+./scripts/record_cameras.sh /home/engram/data/piper/camera_check_000 10
+
+# 自定义子集：第二个参数换成另一份 stream config
+./scripts/record_bag.sh /home/engram/data/piper/custom_000 /absolute/path/streams.yaml
+```
+
+两条录制入口都使用 zstd message compression、自动创建目标父目录，并拒绝覆盖已有输出目录。
+原始 rosbag 可以通过自定义 stream config 不录图像；但当前 canonical HDF5/LeRobot v3 合同仍要求
+三路 RGB，因此无图像 bag 尚不能直接冒充完整 episode。
+
 ## 四臂 CAN 部署
 
 2026-08-13 先通过 sysfs/udev 属性链识别四个 `gs_usb` 设备，随后完成系统部署验证：
@@ -275,9 +294,32 @@ ros2 service call /dual_arm_teleop/arm std_srvs/srv/SetBool "{data: false}"
 description）和 ROS librealsense2 2.58.3 已安装在 `/opt/ros/humble`。系统级
 librealsense2 runtime/tools 2.58.1（含 `rs-enumerate-devices` 和 `realsense-viewer`）仍并存。
 
-当前 `rs-enumerate-devices -s` 未枚举到相机，因此尚无可记录的 serial，三台物理相机的
-serial 映射待连接设备后确定。这只是当前检查结果，连接状态和软件环境可能变化，配置相机
-topic 前需要重新确认。
+初审时 `rs-enumerate-devices -s` 未枚举到相机；稍后三台 D435 已接入并记录 inventory：
+`349622073361`、`335622070696`、`335622072178`。三台分别按 serial 有界启动时均报告 USB 3.2，
+成功打开 RGB8 640×480@30 并发布 `sensor_msgs/msg/Image`。用户随后根据按 serial 命名的真实
+预览确认 front=`335622070696`、left=`349622073361`、right=`335622072178`，映射已写入
+`config/cameras.yaml`，不是按输出或 USB 顺序推断。三台当时共享一条 5 Gbps Hub 链路，长时
+帧率/稳定性仍待验收。
+
+三路并发 Python status 的消费率曾明显低于 30 Hz；但最新 9.864 秒 C++ rosbag 短包已实际写入
+每路 297 帧（共 891），自动读回三路类型/count/header timestamp 成功。按 rosbag 接收时间计算，
+front/left/right 分别约 30.01/30.07/30.05 Hz 且没有超过 100 ms 的接收 gap。left/right 各有一张
+启动前约 1.19 秒的缓存帧，若直接按首尾 header 计算会显示约 26.89 Hz。Python subscriber 观测率
+不能替代真实 recorder count，因此 30 Hz
+长时性能仍作为后续优化项，不阻塞第一版绑定/录制 pipeline。默认 status 对 type、唯一
+publisher、RGB8、640×480 和 timestamp 严格失败，对 rate/gap 只告警；显式
+`--require-nominal-rate` 才启用严格诊断。`scripts/record_cameras.sh` 提供 serial/status、三路 RGB
+preflight、短包和自动读回统计，不补帧或把低帧率写成通过。
+
+写入用户确认的正式角色后，三路目标 topic 的 type、唯一 publisher、RGB8、640×480 和 timestamp
+门禁通过；上述 zstd message-compressed 短包及三路 PNG 抽帧均成功。这个结果证明当前 serial
+绑定和三路录制 pipeline 可用；不替代拔插重启、5 分钟性能或完整 11-topic episode 验收。
+
+仓库现提供严格的 `config/cameras.yaml`、inventory/assignment/status 工具和按 serial 选择设备的
+`three_realsense.launch.py`。配置要求三个非空且唯一 serial；角色未确认或设备缺失时 launch 会在
+创建节点前失败，不会按枚举顺序猜设备或长期等待。插线、角色认定、单台/三台 5 分钟验收、拔插
+回归和短 bag 读回的逐步流程见 [`docs/cameras.md`](docs/cameras.md)。这些离线代码尚不构成
+长时真机稳定性验证；当前只完成了三路短包与抽帧检查。
 
 ## 默认 topic 映射
 
@@ -353,7 +395,7 @@ ros2 run piper_aio_ros2 replay /path/to/episode_0.hdf5 --mode eef
   反接、10% 跟随过慢。仓库的 serial 语义修正、ROS 补偿撤销、冻结目标的两阶段对齐和
   100 Hz/100% 同步已经代码化；系统映射重启生效后仍需再次真机回归。这不是长时间稳定性或完整
   物理安全认证。
-- 相机 serial 绑定、相机 launch 和相机 topic 保持为后续独立任务边界；本次未添加或修改
-  相机启动逻辑。
+- 相机部署代码和用户确认的 serial→角色配置已加入；三台正式角色 topic、RGB profile/type 和
+  三路短包已验证，但长时帧率、USB 带宽和拔插重连仍待后续检查。
 
 许可证与来源归属见 `LICENSE` 和 `NOTICE`。

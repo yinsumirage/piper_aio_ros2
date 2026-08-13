@@ -13,19 +13,35 @@
   topic，同时继续拒绝未授权 command/enable publisher。
 - `b266a6958f43e20f0b3bec0209c6d819538d3602`：加入默认 unarmed、双侧原子门禁和 fault latch 的
   双臂 teleop bridge；未包含自动 enable。
+- 本相机分支起点为 `eee9833b7412ee7a05ae85f913a8d80ad9962d40`；最终相机提交 SHA 见 Git 历史。
 
 ## 已验证
 
 - 初次 CAN 系统部署曾验证四个 `gs_usb` 稳定名均为 1 Mbps、UP，
   `scripts/can_status.sh` 返回成功；后续真实运动证明当时两路 follower 的 `l/r` 名称与物理角色
   相反。该结果证明网络部署可用，不证明初始 follower 角色判断正确。
+- 相机部署代码的离线合同已实现：空/重复 serial fail-closed，launch 在创建节点前有界核对当前
+  设备集合，三路目标 topic 与现有采集白名单一致；纯 Python 测试和 launch 参数静态检查通过。
+  初审时无设备；稍后三台 D435 接入并记录真实 serial/model/firmware/USB 3.2/physical port，
+  分别按 serial 有界启动均成功打开 RGB8 640×480@30 且发布 `sensor_msgs/msg/Image`，结束无残留。
+  用非物理角色的临时映射并发 300 秒时，Python status 只消费到约 10.9/13.6/14.9 Hz；独立
+  Python 进程仍低于目标。但 C++ rosbag recorder 的 9.84 秒真实短包每路均写入 296 帧，三路
+  type/count/header timestamp 自动读回成功，left/right header rate 约 29.98 Hz，front 因首尾
+  header 跨度约 26.88 Hz。前者不能作为发布率结论，后者证明当前三路可录制但不是长时 30 Hz
+  验收。30 Hz 不再阻塞绑定/录包；默认 status 只告警，严格诊断需显式开启。三台共享 5 Gbps
+  Hub。用户已根据 serial-labelled 预览确认 front=`335622070696`、left=`349622073361`、
+  right=`335622072178` 并写入配置。正式角色 5 秒 status 通过 type、唯一 publisher、RGB8、
+  640×480 和 timestamp 门禁；随后 9.87 秒 zstd bag 自动读回成功，front/left/right 分别
+  297/296/294 帧，共 887 帧，三路类型与 header timestamp 正确。随后修复父目录创建和 file
+  compression 退出截断问题，9.864 秒 message/zstd 正式短包三路各 297 帧并自动读回成功。
+  拔插重连、5 分钟性能和完整 11-topic episode 仍未验证。
 - 在带 timeout 的被动监听中，四个接口都观察到真实 CAN 流。这个结果只证明总线上有真实帧，
   不证明四路 ROS 解码、topic 语义或机械臂动作正确。
 - 对 `can_master_l` 做过一次受控 ROS 读取检查：`JointState` 收到 30 帧，观测频率约
   200 Hz。该结果不外推到其余三路。
 - 官方 `piper_read_slave_joint` 初始化期间观察到 13 个查询帧。它们不是运动帧或使能帧，
   检查中没有使能或运动机械臂；但这是非零 TX，因此该节点不能称为严格被动监听。
-- 当前代码的 43 个 Python 测试（另含 8 个 subtest）及 tmux/control shell 测试通过；teleop 覆盖严格 9D 名称映射、
+- 当前合并代码的 52 个 Python 测试（另含 16 个 subtest）及 tmux/control shell 测试通过；teleop 覆盖严格 9D 名称映射、
   `abs(joint7-joint8)` 夹爪开度、双侧原子 arming、首帧保持、冻结 master 目标、settle、超时、双侧同时切换、command 限位、step、stale
   和 fault latch。
 - 隔离 `ROS_DOMAIN_ID` 的单进程合成测试通过：unarmed 时两路均 0 command；显式 arm 后第一帧
@@ -96,7 +112,7 @@
   真机确认会在约 `0.7 s` settle 后进入 live follow。
 - tmux 保持左 DRIVER、右上 TELEOP、右下 CONTROL，但将 DRIVER 明确限制为 30% 宽；临时 tmux
   会话验证右侧两窗获得约 70% 宽度。布局测试未启动 ROS 或硬件。
-- 相机未完成 serial 绑定和图像 topic 验证。
+- 相机人工 serial→角色、三路目标 topic 和正式角色短包已验证；拔插重连与长时性能仍未完成。
 - EEF 坐标系、四元数到 RPY 约定和跨设备时间同步未验证。两路 master 的 9D name/当前值已
   观测，但夹爪单位、方向、零点与完整行程仍未通过现场物理扰动标定。
 - 尚未完成包含三相机、双 follower、双 leader action 和双 EEF 的完整 episode 录制、保存、

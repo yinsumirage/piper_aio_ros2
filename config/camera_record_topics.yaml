@@ -1,0 +1,16 @@
+streams:
+  rgb_front:
+    topic: /camera_f/color/image_raw
+    type: sensor_msgs/msg/Image
+    kind: rgb
+    camera: cam_high
+  rgb_left:
+    topic: /camera_l/color/image_raw
+    type: sensor_msgs/msg/Image
+    kind: rgb
+    camera: cam_left_wrist
+  rgb_right:
+    topic: /camera_r/color/image_raw
+    type: sensor_msgs/msg/Image
+    kind: rgb
+    camera: cam_right_wrist

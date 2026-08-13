@@ -23,7 +23,8 @@ canonical HDF5 schema v1，再导出为本地 LeRobot Dataset v3。录包和转�
 | right executed command | `/follower_right/joint_ctrl_cmd` | `sensor_msgs/msg/JointState` |
 
 默认不录 depth。运行前 preflight 会以 JSON 检查 topic 存在、类型、publisher、磁盘空间及
-输出目录；缺相机时明确失败。输出目录已存在时脚本拒绝覆盖，录包使用 zstd file compression。
+输出目录；缺相机时明确失败。脚本自动创建目标父目录，目标目录已存在时拒绝覆盖，录包使用
+zstd message compression。
 control-topic 检查只放行白名单以及两个精确的官方反馈 topic
 `/follower_left/joint_ctrl`、`/follower_right/joint_ctrl`；其他 `joint_ctrl`、`pos_cmd`、
 `gripper_ctrl`、`enable_flag` 或 `/control/` publisher 仍会阻止录包。隔离 ROS 图已用 11 个
@@ -41,6 +42,11 @@ ros2 run piper_aio_ros2 bag_preflight --config config/record_topics.yaml --outpu
 ```
 
 上述命令假定所需 publisher 已经由用户按独立安全流程启动；本仓库的录包脚本不会代为启动。
+默认 `config/record_topics.yaml` 是包含三路 RGB 的 11-topic 整体 profile；
+`scripts/record_cameras.sh` + `config/camera_record_topics.yaml` 是相机-only 诊断案例。
+`record_bag.sh` 的第二个参数可以换成自定义 stream config，从而录制 topic 子集；但是当前
+canonical HDF5/LeRobot v3 schema 要求三路 RGB，无图像 bag 只能视为原始诊断数据，不能直接走
+现有完整 episode 转换。
 
 ## canonical HDF5 schema v1
 
@@ -137,9 +143,10 @@ inspect -> HDF5 -> validate -> LeRobot reload，并用隔离的合成 publisher 
 preflight 与 file/zstd 录包；精确 30 Hz、30 帧的 file/zstd 合成 bag 已跑通
 inspect -> HDF5 -> validate，得到 30/30 帧且 `action_source=executed`。
 
-真实相机输入和长 episode 的端到端处理尚未验证；上述压缩 bag 验证使用合成数据，不代表真实
-相机链路。三台相机 serial 物理映射也仍待设备接入后确认。这些限制不影响离线合同测试，但
-意味着当前结果不能宣称真实完整 episode 录制已经通过。
+三台真实相机已完成 serial→角色绑定、三路 RGB8 640×480 短包和 PNG 抽帧检查；长 episode、
+相机拔插重连以及包含机械臂状态/action/EEF 的完整 11-topic 真机录制仍未验证。上述合成
+file/zstd 证据继续覆盖转换链，真实相机短包则使用 zstd message compression；两者都不能替代
+完整 episode 验收。
 
 teleop 另在隔离 ROS domain 中验证了默认 unarmed 零 command、显式 arming 后左右均发布有界
 7D command、输入 stale 后停止；真实四路输入窗口也验证了 unarmed 时 4.02 秒左右均为零
